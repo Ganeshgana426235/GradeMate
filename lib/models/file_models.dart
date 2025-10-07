@@ -1,8 +1,7 @@
+// lib/models/file_models.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Represents a single file's data stored in Firestore.
-/// This class acts as a data model to organize file information
-/// retrieved from the 'files' collection.
+/// Represents a single file's data stored in Firestore document.
 class FileData {
   final String id;
   final String name;
@@ -32,11 +31,11 @@ class FileData {
   factory FileData.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return FileData(
-      id: doc.id,
+      id: doc.id, // ID comes from the Document ID
       name: data['name'] ?? '',
       url: data['url'] ?? '',
       type: data['type'] ?? 'unknown',
-      size: data['size'] ?? 0,
+      size: (data['size'] ?? 0).toInt(),
       uploadedAt: data['uploadedAt'] ?? Timestamp.now(),
       ownerId: data['ownerId'] ?? '',
       ownerName: data['ownerName'],
@@ -44,11 +43,29 @@ class FileData {
       sharedWith: List<String>.from(data['sharedWith'] ?? []),
     );
   }
+
+  /// Converts FileData to a Map for storage as a document.
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'url': url,
+      'type': type,
+      'size': size,
+      'uploadedAt': uploadedAt,
+      'ownerId': ownerId,
+      'ownerName': ownerName,
+      'parentFolderId': parentFolderId,
+      'sharedWith': sharedWith,
+    };
+  }
+  
+  /// Creates a simple map containing only the ID, used for root array mirroring.
+  Map<String, dynamic> toPointerMap() {
+    return {'id': id};
+  }
 }
 
-/// Represents a folder's data stored in Firestore.
-/// This model is used to organize and manage folders and their contents
-/// (sub-folders and files).
+/// Represents a folder's data stored in Firestore document.
 class FolderData {
   final String id;
   final String name;
@@ -77,5 +94,21 @@ class FolderData {
       parentFolderId: data['parentFolderId'],
       sharedWith: List<String>.from(data['sharedWith'] ?? []),
     );
+  }
+
+  /// Converts FolderData to a Map for storage as a document.
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'ownerId': ownerId,
+      'ownerName': ownerName,
+      'parentFolderId': parentFolderId,
+      'sharedWith': sharedWith,
+    };
+  }
+  
+  /// Creates a simple map containing only the ID, used for root array mirroring.
+  Map<String, dynamic> toPointerMap() {
+    return {'id': id};
   }
 }

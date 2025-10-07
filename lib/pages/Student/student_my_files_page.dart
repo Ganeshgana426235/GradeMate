@@ -107,32 +107,31 @@ class _MyFilesPageState extends State<MyFilesPage> {
     );
   }
   
+  // Helper to get the correct collection reference for the current file/folder location
+  CollectionReference<Map<String, dynamic>> _getCurrentCollectionRef(String collectionName) {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      throw Exception("User not authenticated or email missing.");
+    }
+
+    if (_currentFolderId == null) {
+      // Root level: /users/{email}/files or /users/{email}/folders
+      return _firestore.collection('users').doc(user.email).collection(collectionName);
+    } else {
+      // Nested level: /folders/{folderId}/files or /folders/{folderId}/folders
+      return _firestore.collection('folders').doc(_currentFolderId).collection(collectionName);
+    }
+  }
+
   void _fetchAndCacheAllData() async {
     setState(() {
       _isLoading = true;
     });
 
-    final user = _auth.currentUser;
-    if (user == null) {
-      setState(() {
-        _isLoading = false;
-      });
-      return;
-    }
-
     try {
-      CollectionReference filesCollection;
-      CollectionReference foldersCollection;
-
-      if (_currentFolderId == null) {
-        // Fetch from user's root subcollections
-        filesCollection = _firestore.collection('users').doc(user.uid).collection('files');
-        foldersCollection = _firestore.collection('users').doc(user.uid).collection('folders');
-      } else {
-        // Fetch from subcollections of the current folder
-        filesCollection = _firestore.collection('folders').doc(_currentFolderId).collection('files');
-        foldersCollection = _firestore.collection('folders').doc(_currentFolderId).collection('folders');
-      }
+      // Fetch data from the appropriate subcollections
+      final filesCollection = _getCurrentCollectionRef('files');
+      final foldersCollection = _getCurrentCollectionRef('folders');
 
       final filesSnapshot = await filesCollection.get();
       final foldersSnapshot = await foldersCollection.get();
@@ -168,45 +167,53 @@ class _MyFilesPageState extends State<MyFilesPage> {
 
   Future<void> _uploadFile() async {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null || user.email == null) return;
     
     final result = await FilePicker.platform.pickFiles();
     if (result == null) return;
 
     final file = result.files.first;
     final fileName = file.name;
-    final filePath = file.bytes!;
+    final filePathBytes = file.bytes!;
     
-    final storageRef = _storage.ref().child('uploads/${user.uid}/${_currentFolderId ?? 'root'}/$fileName');
+    // Determine the collection for the new file
+    final filesCollection = _getCurrentCollectionRef('files');
+    final fileDocRef = filesCollection.doc(); // Let Firestore generate the ID
+    final newFileId = fileDocRef.id;
+
+    final storagePath = 'uploads/${user.uid}/${_currentFolderId ?? 'root'}/$fileName';
+    final storageRef = _storage.ref().child(storagePath);
     
     try {
-      final uploadTask = storageRef.putData(filePath);
+      final uploadTask = storageRef.putData(filePathBytes);
       final snapshot = await uploadTask.whenComplete(() {});
       final downloadUrl = await snapshot.ref.getDownloadURL();
 
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      final userDoc = await _firestore.collection('users').doc(user.email).get();
       final ownerName = userDoc.data()?['name'] ?? 'Unknown';
 
-      final fileData = {
-        'name': fileName,
-        'url': downloadUrl,
-        'size': file.size,
-        'type': file.extension,
-        'uploadedAt': FieldValue.serverTimestamp(),
-        'ownerId': user.uid,
-        'ownerName': ownerName,
-        'parentFolderId': _currentFolderId,
-        'sharedWith': [],
-      };
+      final newFileData = FileData(
+        id: newFileId,
+        name: fileName,
+        url: downloadUrl,
+        size: file.size ?? 0,
+        type: file.extension ?? 'unknown',
+        uploadedAt: Timestamp.now(),
+        ownerId: user.uid,
+        ownerName: ownerName,
+        parentFolderId: _currentFolderId,
+        sharedWith: [],
+      );
       
-      CollectionReference filesCollection;
+      // 1. Store the full details as a document in the appropriate subcollection
+      await fileDocRef.set(newFileData.toMap());
+      
+      // 2. MIRRORING FOR ROOT ONLY (User requested this feature)
       if (_currentFolderId == null) {
-        filesCollection = _firestore.collection('users').doc(user.uid).collection('files');
-      } else {
-        filesCollection = _firestore.collection('folders').doc(_currentFolderId).collection('files');
+        await _firestore.collection('users').doc(user.email).update({
+          'files': FieldValue.arrayUnion([newFileData.toPointerMap()]),
+        });
       }
-      
-      await filesCollection.add(fileData);
 
       _showSnackbar('File uploaded successfully!');
       _fetchAndCacheAllData();
@@ -216,114 +223,76 @@ class _MyFilesPageState extends State<MyFilesPage> {
     }
   }
   
-  Future<void> _downloadFile(FileData file) async {
-    try {
-      final dio = Dio();
-      final Directory? baseDownloadDir = await getExternalStorageDirectory();
-      if (baseDownloadDir == null) {
-        _showSnackbar('Failed to find a valid download directory.', success: false);
-        return;
-      }
-      final Directory gradeMateDir = Directory('${baseDownloadDir.path}${Platform.pathSeparator}GradeMate');
-
-      if (!await gradeMateDir.exists()) {
-        try {
-          await gradeMateDir.create(recursive: true);
-        } catch (e) {
-          _showSnackbar('Failed to create folder. Cannot download.', success: false);
-          return;
-        }
-      }
-      
-      final filePath = '${gradeMateDir.path}${Platform.pathSeparator}${file.name}';
-      
-      await dio.download(
-        file.url,
-        filePath,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            final progress = (received / total * 100).toInt();
-            _showProgressNotification(file.name, progress);
-          }
-        },
-      );
-      await _showCompletionNotification(file.name);
-      _showSnackbar('File downloaded successfully!');
-      
-    } catch (e) {
-      _showSnackbar('Error during download: ${e.toString()}', success: false);
-    }
-  }
-
-  Future<void> _shareFile(FileData file) async {
-    try {
-      final dio = Dio();
-      final dir = await getTemporaryDirectory();
-      final tempFilePath = '${dir.path}/${file.name}';
-      
-      await dio.download(file.url, tempFilePath);
-
-      await Share.shareXFiles([XFile(tempFilePath)], text: 'Check out this file from GradeMate: ${file.name}');
-
-    } catch (e) {
-      _showSnackbar('❌ Failed to share file: $e',);
-    }
-  }
-
   Future<void> _createFolder(String folderName) async {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null || user.email == null) return;
 
-    final folderId = _firestore.collection('folders').doc().id;
-    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+    // Determine the collection for the new folder
+    final foldersCollection = _getCurrentCollectionRef('folders');
+    final folderDocRef = foldersCollection.doc(); // Let Firestore generate the ID
+    final newFolderId = folderDocRef.id;
+
+    final userDoc = await _firestore.collection('users').doc(user.email).get();
     final ownerName = userDoc.data()?['name'] ?? 'Unknown';
 
-    final folderData = {
-      'name': folderName,
-      'createdAt': FieldValue.serverTimestamp(),
-      'ownerId': user.uid,
-      'ownerName': ownerName,
-      'parentFolderId': _currentFolderId,
-      'sharedWith': [],
-    };
-    
-    CollectionReference foldersCollection;
-    if (_currentFolderId == null) {
-      foldersCollection = _firestore.collection('users').doc(user.uid).collection('folders');
-    } else {
-      foldersCollection = _firestore.collection('folders').doc(_currentFolderId).collection('folders');
+    final newFolderData = FolderData(
+      id: newFolderId,
+      name: folderName,
+      ownerId: user.uid,
+      ownerName: ownerName,
+      parentFolderId: _currentFolderId,
+      sharedWith: [],
+    );
+
+    try {
+      // 1. Store the full details as a document in the appropriate subcollection
+      await folderDocRef.set(newFolderData.toMap());
+
+      // 2. Create the master document in the top-level /folders collection 
+      // This is necessary because it hosts the NESTED subcollections for subsequent levels.
+      final masterFolderRef = _firestore.collection('folders').doc(newFolderId);
+      await masterFolderRef.set(newFolderData.toMap());
+      
+      // 3. MIRRORING FOR ROOT ONLY (User requested this feature)
+      if (_currentFolderId == null) {
+        await _firestore.collection('users').doc(user.email).update({
+          'folders': FieldValue.arrayUnion([newFolderData.toPointerMap()]),
+        });
+      }
+      
+      _showSnackbar('Folder "$folderName" created successfully!');
+      _fetchAndCacheAllData();
+    } catch (e) {
+      _showSnackbar('Failed to create folder: $e', success: false);
+      debugPrint('Folder creation error: $e');
     }
-
-    await foldersCollection.doc(folderId).set(folderData);
-    
-    _showSnackbar('Folder "$folderName" created successfully!');
-    _fetchAndCacheAllData();
   }
-
-  Future<void> _deleteFile(String fileId, String fileName) async {
+  
+  Future<void> _deleteFile(FileData file) async {
     try {
       final user = _auth.currentUser;
-      if (user == null) return;
+      if (user == null || user.email == null) return;
       
-      final storagePath = 'uploads/${user.uid}/${_currentFolderId ?? 'root'}/$fileName';
+      // 1. Delete from Storage
+      final storagePath = 'uploads/${user.uid}/${file.parentFolderId ?? 'root'}/${file.name}';
       final storageRef = _storage.ref().child(storagePath);
-      
-      // Check if file exists in storage before attempting deletion
       try {
-        await storageRef.getDownloadURL(); // This will throw an error if the file doesn't exist
+        await storageRef.getDownloadURL(); 
         await storageRef.delete();
       } catch (e) {
         debugPrint('File not found in storage or failed to delete: $e');
       }
 
-      CollectionReference filesCollection;
-      if (_currentFolderId == null) {
-        filesCollection = _firestore.collection('users').doc(user.uid).collection('files');
-      } else {
-        filesCollection = _firestore.collection('folders').doc(_currentFolderId).collection('files');
-      }
+      // 2. Delete the document from the current subcollection location
+      final fileDocRef = _getCurrentCollectionRef('files').doc(file.id);
+      await fileDocRef.delete();
       
-      await filesCollection.doc(fileId).delete();
+      // 3. MIRRORING FOR ROOT ONLY: Remove ID from user's document array
+      if (_currentFolderId == null) {
+        await _firestore.collection('users').doc(user.email).update({
+          'files': FieldValue.arrayRemove([file.toPointerMap()]),
+        });
+      }
       
       _showSnackbar('File deleted successfully!');
       _fetchAndCacheAllData();
@@ -333,52 +302,114 @@ class _MyFilesPageState extends State<MyFilesPage> {
     }
   }
 
-  Future<void> _deleteFolder(String folderId) async {
+  Future<void> _deleteFolder(FolderData folder) async {
     try {
       final user = _auth.currentUser;
-      if (user == null) return;
+      if (user == null || user.email == null) return;
       
-      final folderRef = _firestore.collection('folders').doc(folderId);
+      // Recursive helper to delete contents and master documents in nested structure
+      Future<void> _recursiveDelete(String folderId, String ownerUid) async {
+        final masterFolderRef = _firestore.collection('folders').doc(folderId);
 
-      // Recursive helper function to delete subcollections
-      Future<void> _recursiveDelete(DocumentReference folderRef) async {
+        // 1. Target the collections that hold the *contents* of this folder
+        CollectionReference filesCollection = masterFolderRef.collection('files');
+        CollectionReference foldersCollection = masterFolderRef.collection('folders');
+        
         final WriteBatch batch = _firestore.batch();
         
         // Delete all files in the current folder
-        final filesSnapshot = await folderRef.collection('files').get();
+        final filesSnapshot = await filesCollection.get();
         for (var fileDoc in filesSnapshot.docs) {
+          final fileData = FileData.fromFirestore(fileDoc);
+          // Delete from Storage
+          final storagePath = 'uploads/$ownerUid/${folderId}/${fileData.name}';
+          final storageRef = _storage.ref().child(storagePath);
+          try { await storageRef.delete(); } catch (e) { debugPrint('Storage delete error: $e'); }
+          
           batch.delete(fileDoc.reference);
         }
         
         // Delete all subfolders and their contents
-        final foldersSnapshot = await folderRef.collection('folders').get();
+        final foldersSnapshot = await foldersCollection.get();
         for (var subfolderDoc in foldersSnapshot.docs) {
-          await _recursiveDelete(subfolderDoc.reference);
+          // Recursively delete subfolder contents and master document
+          await _recursiveDelete(subfolderDoc.id, ownerUid); 
+          batch.delete(subfolderDoc.reference); // Delete the subfolder doc
         }
         
-        // After deleting contents, delete the folder document itself
-        batch.delete(folderRef);
+        // After deleting all contents, delete the master folder document itself
+        batch.delete(masterFolderRef);
         await batch.commit();
       }
 
-      // Start the recursive deletion from the specified folder
-      await _recursiveDelete(folderRef);
+      // 1. Delete the document from the current subcollection location
+      final folderDocRef = _getCurrentCollectionRef('folders').doc(folder.id);
+      await folderDocRef.delete();
+      
+      // 2. Recursively delete the master folder document and its contents from the /folders collection
+      await _recursiveDelete(folder.id, user.uid);
+      
+      // 3. MIRRORING FOR ROOT ONLY: Remove ID from user's document array
+      if (_currentFolderId == null) {
+        await _firestore.collection('users').doc(user.email).update({
+          'folders': FieldValue.arrayRemove([folder.toPointerMap()]),
+        });
+      }
 
       _showSnackbar('Folder and its contents deleted successfully!');
       _fetchAndCacheAllData();
     } catch (e) {
-      _showSnackbar('Failed to delete folder: $e', success: false);
+      _showSnackbar('Failed to delete folder: ${e.toString()}', success: false);
       debugPrint('Delete folder error: $e');
     }
   }
   
-  void _showSnackbar(String message, {bool success = true}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: success ? Colors.green : Colors.red,
-      ),
-    );
+  Future<void> _renameItem(String itemId, String oldName, String newName, String type) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) return;
+
+      // Get the document reference for the item in the current location
+      final targetCollection = _getCurrentCollectionRef(type == 'File' ? 'files' : 'folders');
+      final itemRef = targetCollection.doc(itemId);
+      
+      // 1. Update the name in the current location (which holds the full document)
+      await itemRef.update({'name': newName});
+      
+      // 2. If it's a folder, update the master document name too (for consistency/traversal)
+      if (type == 'Folder') {
+          await _firestore.collection('folders').doc(itemId).update({'name': newName});
+      }
+
+      // 3. ROOT ONLY: Update the name in the user's array for the mirrored root item.
+      if (_currentFolderId == null) {
+        final arrayName = type == 'File' ? 'files' : 'folders';
+        // Read-modify-write required for array of maps
+        await _firestore.runTransaction((transaction) async {
+          final userDocRef = _firestore.collection('users').doc(user.email);
+          final userDoc = await transaction.get(userDocRef);
+
+          if (userDoc.exists) {
+            // Need to fetch and convert the array of simple maps (ID/Name)
+            List<Map<String, dynamic>> items = List<Map<String, dynamic>>.from(userDoc.data()?[arrayName] ?? []).cast<Map<String, dynamic>>();
+            final index = items.indexWhere((item) => item['id'] == itemId);
+            
+            if (index != -1) {
+              // Update the name property within the map in the array
+              final updatedItem = Map<String, dynamic>.from(items[index])..['name'] = newName;
+              items[index] = updatedItem;
+              
+              transaction.update(userDocRef, {arrayName: items});
+            }
+          }
+        });
+      }
+      
+      _showSnackbar('Successfully renamed!');
+      _fetchAndCacheAllData();
+    } catch (e) {
+      _showSnackbar('Failed to rename: $e', success: false);
+    }
   }
 
   Future<void> _showCreateFolderDialog() async {
@@ -412,6 +443,15 @@ class _MyFilesPageState extends State<MyFilesPage> {
     );
   }
   
+  void _showSnackbar(String message, {bool success = true}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: success ? Colors.green : Colors.red,
+      ),
+    );
+  }
+  
   void _openFolder(String folderId, String folderName) {
     context.push('/student_my_files/$folderId', extra: folderName);
   }
@@ -420,179 +460,14 @@ class _MyFilesPageState extends State<MyFilesPage> {
     context.pop();
   }
 
-  Future<void> _renameItem(String itemId, String oldName, String newName, String type) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return;
-      
-      DocumentReference itemRef;
-      if (type == 'File') {
-        CollectionReference filesCollection = _currentFolderId == null
-            ? _firestore.collection('users').doc(user.uid).collection('files')
-            : _firestore.collection('folders').doc(_currentFolderId).collection('files');
-        itemRef = filesCollection.doc(itemId);
-      } else {
-        CollectionReference foldersCollection = _currentFolderId == null
-            ? _firestore.collection('users').doc(user.uid).collection('folders')
-            : _firestore.collection('folders').doc(_currentFolderId).collection('folders');
-        itemRef = foldersCollection.doc(itemId);
-      }
-      
-      await itemRef.update({'name': newName});
-      
-      _showSnackbar('Successfully renamed!');
-      _fetchAndCacheAllData();
-    } catch (e) {
-      _showSnackbar('Failed to rename: $e', success: false);
-    }
-  }
-  
-  Future<void> _moveItem(String itemId, String itemType, String newParentFolderId) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return;
-      
-      DocumentSnapshot itemDoc;
-      CollectionReference sourceCollection;
-      
-      if (itemType == 'File') {
-        sourceCollection = _currentFolderId == null
-            ? _firestore.collection('users').doc(user.uid).collection('files')
-            : _firestore.collection('folders').doc(_currentFolderId).collection('files');
-        itemDoc = await sourceCollection.doc(itemId).get();
-      } else {
-        sourceCollection = _currentFolderId == null
-            ? _firestore.collection('users').doc(user.uid).collection('folders')
-            : _firestore.collection('folders').doc(_currentFolderId).collection('folders');
-        itemDoc = await sourceCollection.doc(itemId).get();
-      }
-
-      if (!itemDoc.exists) {
-        _showSnackbar('Item not found.', success: false);
-        return;
-      }
-      
-      CollectionReference destinationCollection;
-      if (newParentFolderId.isEmpty) {
-        destinationCollection = itemType == 'File'
-            ? _firestore.collection('users').doc(user.uid).collection('files')
-            : _firestore.collection('users').doc(user.uid).collection('folders');
-      } else {
-        destinationCollection = itemType == 'File'
-            ? _firestore.collection('folders').doc(newParentFolderId).collection('files')
-            : _firestore.collection('folders').doc(newParentFolderId).collection('folders');
-      }
-      
-      final Map<String, dynamic> data = itemDoc.data() as Map<String, dynamic>;
-      data['parentFolderId'] = newParentFolderId.isEmpty ? null : newParentFolderId;
-      
-      await destinationCollection.doc(itemId).set(data);
-      await sourceCollection.doc(itemId).delete();
-      
-      _showSnackbar('$itemType moved successfully!');
-      _fetchAndCacheAllData();
-    } catch (e) {
-      _showSnackbar('Failed to move $itemType: $e', success: false);
-      debugPrint('Move error: $e');
-    }
-  }
-
-  Future<void> _showMoveDialog(String itemId, String itemType) async {
-    String? currentDialogFolderId = '';
-    String currentDialogFolderName = 'My Files';
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setState) {
-            return AlertDialog(
-              title: Text('Move to: $currentDialogFolderName'),
-              content: StreamBuilder<QuerySnapshot>(
-                stream: currentDialogFolderId == ''
-                    ? _firestore.collection('users').doc(_auth.currentUser!.uid).collection('folders').snapshots()
-                    : _firestore.collection('folders').doc(currentDialogFolderId).collection('folders').snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return const Text('Error loading folders.');
-                  }
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final folders = snapshot.data!.docs.map((doc) => FolderData.fromFirestore(doc)).toList();
-
-                  return SizedBox(
-                    width: double.maxFinite,
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: folders.length,
-                      itemBuilder: (context, index) {
-                        final folder = folders[index];
-                        return ListTile(
-                          leading: const Icon(Icons.folder_outlined),
-                          title: Text(folder.name),
-                          onTap: () {
-                            setState(() {
-                              currentDialogFolderId = folder.id;
-                              currentDialogFolderName = folder.name;
-                            });
-                          },
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-              actions: [
-                if (currentDialogFolderId != '')
-                  TextButton(
-                    onPressed: () async {
-                      final doc = await _firestore.collection('folders').doc(currentDialogFolderId).get();
-                      final parentId = doc.data()?['parentFolderId'];
-                      
-                      setState(() {
-                        currentDialogFolderId = parentId;
-                        currentDialogFolderName = parentId == null 
-                          ? 'My Files' 
-                          : _allFolders.firstWhere((f) => f.id == parentId).name;
-                      });
-                    },
-                    child: const Text('Back'),
-                  ),
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    _moveItem(itemId, itemType, currentDialogFolderId ?? '');
-                    Navigator.of(context).pop();
-                  },
-                  child: const Text('Move Here'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-  
   String _getItemPath(dynamic item) {
-    String? parentId = item is FileData ? item.parentFolderId : (item as FolderData).parentFolderId;
-    List<String> pathSegments = [];
-
-    // This logic needs to traverse up the folder hierarchy, which is complex
-    // with the new structure. A simplified version will be used here.
-    // For full pathing, you would need to fetch all parent folders recursively.
-    if (parentId == null) {
+    if (_currentFolderId == null) {
       return 'My Files';
     } else {
-      return '.../${_currentFolderName}'; // A simplified, relative path
+      return '.../${_currentFolderName}';
     }
   }
-
+  
   List<dynamic> _getFilteredItems() {
     List<dynamic> items = [];
     final lowerCaseQuery = _searchQuery.toLowerCase();
@@ -763,7 +638,7 @@ class _MyFilesPageState extends State<MyFilesPage> {
       leading: Icon(Icons.folder_outlined, color: Colors.blue[800]),
       title: Text(folder.name),
       subtitle: Text(path, style: const TextStyle(color: Colors.grey)),
-      trailing: _buildItemPopupMenu('Folder', folder.id, folder.name),
+      trailing: _buildItemPopupMenu('Folder', folder),
       onTap: () => _openFolder(folder.id, folder.name),
     );
   }
@@ -773,14 +648,19 @@ class _MyFilesPageState extends State<MyFilesPage> {
       leading: Icon(_getFileIcon(file.type), color: Colors.blue[800]),
       title: Text(file.name),
       subtitle: Text(path, style: const TextStyle(color: Colors.grey)),
-      trailing: _buildItemPopupMenu('File', file.id, file.name, file),
+      trailing: _buildItemPopupMenu('File', file),
       onTap: () {
         context.push('/file_viewer', extra: file);
       },
     );
   }
 
-  Widget _buildItemPopupMenu(String type, String itemId, String itemName, [FileData? fileData]) {
+  Widget _buildItemPopupMenu(String type, dynamic item) {
+    final itemId = item.id;
+    final itemName = item.name;
+    final fileData = type == 'File' ? item as FileData : null;
+    final folderData = type == 'Folder' ? item as FolderData : null;
+
     return PopupMenuButton<String>(
       onSelected: (String value) async {
         if (value == 'delete') {
@@ -798,9 +678,9 @@ class _MyFilesPageState extends State<MyFilesPage> {
                   onPressed: () {
                     Navigator.of(context).pop();
                     if (type == 'File') {
-                      _deleteFile(itemId, itemName);
+                      _deleteFile(fileData!);
                     } else {
-                      _deleteFolder(itemId);
+                      _deleteFolder(folderData!);
                     }
                   },
                   child: const Text('Delete'),
@@ -838,7 +718,7 @@ class _MyFilesPageState extends State<MyFilesPage> {
              },
            );
         } else if (value == 'move') {
-          _showMoveDialog(itemId, type);
+          _showSnackbar('Move operation is temporarily disabled.', success: false);
         } else if (value == 'details' && type == 'File') {
           if (fileData != null) {
             context.push('/file_details', extra: fileData);
@@ -916,34 +796,71 @@ class _MyFilesPageState extends State<MyFilesPage> {
       },
     );
   }
-
+  
   IconData _getFileIcon(String? extension) {
     switch (extension?.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf_outlined;
-      case 'doc':
-      case 'docx':
-        return Icons.description_outlined;
-      case 'ppt':
-      case 'pptx':
-        return Icons.slideshow_outlined;
-      case 'xls':
-      case 'xlsx':
-        return Icons.table_chart_outlined;
-      case 'jpg':
-      case 'jpeg':
-      case 'png':
-      case 'gif':
-        return Icons.image_outlined;
-      case 'mp4':
-      case 'mov':
-      case 'avi':
-        return Icons.video_file_outlined;
-      case 'zip':
-      case 'rar':
-        return Icons.folder_zip_outlined;
-      default:
-        return Icons.insert_drive_file_outlined;
+      case 'pdf': return Icons.picture_as_pdf_outlined;
+      case 'doc': case 'docx': return Icons.description_outlined;
+      case 'ppt': case 'pptx': return Icons.slideshow_outlined;
+      case 'xls': case 'xlsx': return Icons.table_chart_outlined;
+      case 'jpg': case 'jpeg': case 'png': case 'gif': return Icons.image_outlined;
+      case 'mp4': case 'mov': case 'avi': return Icons.video_file_outlined;
+      case 'zip': case 'rar': return Icons.folder_zip_outlined;
+      default: return Icons.insert_drive_file_outlined;
+    }
+  }
+  
+  Future<void> _downloadFile(FileData file) async {
+    try {
+      final dio = Dio();
+      final Directory? baseDownloadDir = await getExternalStorageDirectory();
+      if (baseDownloadDir == null) {
+        _showSnackbar('Failed to find a valid download directory.', success: false);
+        return;
+      }
+      final Directory gradeMateDir = Directory('${baseDownloadDir.path}${Platform.pathSeparator}GradeMate');
+
+      if (!await gradeMateDir.exists()) {
+        try {
+          await gradeMateDir.create(recursive: true);
+        } catch (e) {
+          _showSnackbar('Failed to create folder. Cannot download.', success: false);
+          return;
+        }
+      }
+      
+      final filePath = '${gradeMateDir.path}${Platform.pathSeparator}${file.name}';
+      
+      await dio.download(
+        file.url,
+        filePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            final progress = (received / total * 100).toInt();
+            _showProgressNotification(file.name, progress);
+          }
+        },
+      );
+      await _showCompletionNotification(file.name);
+      _showSnackbar('File downloaded successfully!');
+      
+    } catch (e) {
+      _showSnackbar('Error during download: ${e.toString()}', success: false);
+    }
+  }
+
+  Future<void> _shareFile(FileData file) async {
+    try {
+      final dio = Dio();
+      final dir = await getTemporaryDirectory();
+      final tempFilePath = '${dir.path}/${file.name}';
+      
+      await dio.download(file.url, tempFilePath);
+
+      await Share.shareXFiles([XFile(tempFilePath)], text: 'Check out this file from GradeMate: ${file.name}');
+
+    } catch (e) {
+      _showSnackbar('❌ Failed to share file: $e', success: false);
     }
   }
 }

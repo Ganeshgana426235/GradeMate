@@ -45,7 +45,8 @@ class _LoginPageState extends State<LoginPage> {
       final user = userCredential.user;
       if (user != null && user.emailVerified) {
         // Fetch user role from Firestore and navigate accordingly
-        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        // CORRECTED: Use user.email! as the document ID to match registration logic
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.email!).get();
         if (userDoc.exists) {
           final role = userDoc.data()?['role'];
           _emailController.clear();
