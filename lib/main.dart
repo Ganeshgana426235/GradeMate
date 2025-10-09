@@ -78,7 +78,17 @@ final _router = GoRouter(
     ),
     GoRoute(
       path: '/faculty_my_files',
-      builder: (context, state) => const FacultyMyFilesPage(),
+      builder: (context, state) => const MyFilesPage(),
+      routes: [
+        GoRoute(
+          path: ':folderId',
+          builder: (context, state) {
+            final folderId = state.pathParameters['folderId'];
+            final folderName = state.extra as String?;
+            return MyFilesPage(folderId: folderId, folderName: folderName);
+          },
+        ),
+      ],
     ),
     GoRoute(
       path: '/faculty_profile',
