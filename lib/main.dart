@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:path_provider/path_provider.dart'; // [ADDED]
+import 'package:hive_flutter/hive_flutter.dart';    // [ADDED]
 
 import 'package:grademate/firebase_options.dart';
 import 'package:grademate/providers/auth_provider.dart' as AppAuthProvider;
@@ -94,6 +96,12 @@ final _router = GoRouter(
   redirect: (context, state) {
     final user = FirebaseAuth.instance.currentUser;
     final isAuthenticated = user != null;
+    final isVerified = isAuthenticated ? user.emailVerified : false; 
+    
+    // Check if Hive box is open, get role
+    final userBox = Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null; 
+    final role = userBox?.get('role');
+
     final isAuthPage = [
       '/login',
       '/register',
@@ -101,29 +109,45 @@ final _router = GoRouter(
       '/',
     ].contains(state.uri.toString());
 
-    // Not logged in: only allow auth pages
-    if (!isAuthenticated) {
+    // 1. Not logged in OR Not verified: Must go to auth pages.
+    if (!isAuthenticated || !isVerified) {
+      // Clear local storage if we end up here to ensure a fresh start
+      if (userBox != null) userBox.clear();
       return isAuthPage ? null : '/login';
     }
 
-    // Not verified: only allow auth pages
-    if (!user!.emailVerified) {
-      return isAuthPage ? null : '/login';
-    }
-
-    // Already logged in and verified: prevent access to auth pages
+    // 2. Logged in and verified: Redirect away from auth pages to their respective home page.
     if (isAuthPage) {
-      // Optionally, you could redirect to a default home page here
-      return null;
+      if (role == 'Student') {
+        return '/student_home';
+      } else if (role == 'Faculty') {
+        return '/faculty_home';
+      }
+      
+      // Fallback if local role is missing despite Firebase login, force relogin
+      if (role == null) {
+          // Firebase sign out removes the Firebase user object, forcing redirect back to /login on next check
+          FirebaseAuth.instance.signOut(); 
+          if (userBox != null) userBox.clear();
+          return '/login';
+      }
     }
 
-    // Allow navigation
+    // 3. Allow navigation (e.g., already on /student_home, or accessing /file_details)
     return null;
   },
 );
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // [START HIVE INITIALIZATION]
+  final appDocumentDir = await getApplicationDocumentsDirectory();
+  await Hive.initFlutter(appDocumentDir.path);
+  // Opens the box for string data storage
+  await Hive.openBox<String>('userBox'); 
+  // [END HIVE INITIALIZATION]
+  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

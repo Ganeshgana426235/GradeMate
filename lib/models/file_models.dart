@@ -1,4 +1,3 @@
-// lib/models/file_models.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Represents a single file's data stored in Firestore document.
@@ -59,9 +58,31 @@ class FileData {
     };
   }
   
-  /// Creates a simple map containing only the ID, used for root array mirroring.
-  Map<String, dynamic> toPointerMap() {
-    return {'id': id};
+  /// Creates a copy of this FileData object, optionally changing the name.
+  FileData copyWith({
+    String? id,
+    String? name,
+    String? url,
+    String? type,
+    int? size,
+    Timestamp? uploadedAt,
+    String? ownerId,
+    String? ownerName,
+    String? parentFolderId,
+    List<String>? sharedWith,
+  }) {
+    return FileData(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      url: url ?? this.url,
+      type: type ?? this.type,
+      size: size ?? this.size,
+      uploadedAt: uploadedAt ?? this.uploadedAt,
+      ownerId: ownerId ?? this.ownerId,
+      ownerName: ownerName ?? this.ownerName,
+      parentFolderId: parentFolderId ?? this.parentFolderId,
+      sharedWith: sharedWith ?? this.sharedWith,
+    );
   }
 }
 
@@ -73,6 +94,9 @@ class FolderData {
   final String? ownerName;
   final String? parentFolderId;
   final List<String> sharedWith;
+  final Timestamp? createdAt;
+  final List<String> files; // Optional: file IDs
+  final List<String> folders; // Optional: child folder IDs
 
   FolderData({
     required this.id,
@@ -81,6 +105,9 @@ class FolderData {
     this.ownerName,
     this.parentFolderId,
     this.sharedWith = const [],
+    this.createdAt,
+    this.files = const [],
+    this.folders = const [],
   });
 
   /// Factory constructor to create a FolderData object from a Firestore document snapshot.
@@ -93,6 +120,9 @@ class FolderData {
       ownerName: data['ownerName'],
       parentFolderId: data['parentFolderId'],
       sharedWith: List<String>.from(data['sharedWith'] ?? []),
+      createdAt: data['createdAt'] as Timestamp?,
+      files: List<String>.from(data['files'] ?? []),
+      folders: List<String>.from(data['folders'] ?? []),
     );
   }
 
@@ -104,11 +134,34 @@ class FolderData {
       'ownerName': ownerName,
       'parentFolderId': parentFolderId,
       'sharedWith': sharedWith,
+      'createdAt': createdAt ?? Timestamp.now(),
+      'files': files,
+      'folders': folders,
     };
   }
-  
-  /// Creates a simple map containing only the ID, used for root array mirroring.
-  Map<String, dynamic> toPointerMap() {
-    return {'id': id};
+
+  /// Creates a copy of this FolderData object, optionally changing the name.
+  FolderData copyWith({
+    String? id,
+    String? name,
+    String? ownerId,
+    String? ownerName,
+    String? parentFolderId,
+    List<String>? sharedWith,
+    Timestamp? createdAt,
+    List<String>? files,
+    List<String>? folders,
+  }) {
+    return FolderData(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      ownerId: ownerId ?? this.ownerId,
+      ownerName: ownerName ?? this.ownerName,
+      parentFolderId: parentFolderId ?? this.parentFolderId,
+      sharedWith: sharedWith ?? this.sharedWith,
+      createdAt: createdAt ?? this.createdAt,
+      files: files ?? this.files,
+      folders: folders ?? this.folders,
+    );
   }
 }

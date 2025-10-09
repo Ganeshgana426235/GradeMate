@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hive_flutter/hive_flutter.dart'; // [ADDED]
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -48,18 +49,33 @@ class _LoginPageState extends State<LoginPage> {
         // CORRECTED: Use user.email! as the document ID to match registration logic
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.email!).get();
         if (userDoc.exists) {
-          final role = userDoc.data()?['role'];
-          _emailController.clear();
-          _passwordController.clear();
-          if (role == 'Student') {
-            context.go('/student_home');
-          } else if (role == 'Faculty') {
-            context.go('/faculty_home');
+          final role = userDoc.data()?['role'] as String?;
+          final uid = user.uid; // Get UID
+
+          if (role != null) {
+            // [START HIVE STORAGE LOGIC] Store user details in Hive for persistent login
+            final userBox = Hive.box<String>('userBox');
+            userBox.put('uid', uid);
+            userBox.put('email', user.email!);
+            userBox.put('role', role); // Store the role to guide redirection
+            // [END HIVE STORAGE LOGIC]
+
+            _emailController.clear();
+            _passwordController.clear();
+            if (role == 'Student') {
+              context.go('/student_home');
+            } else if (role == 'Faculty') {
+              context.go('/faculty_home');
+            } else {
+              _showSnackbar('Unknown user role. Please contact support.');
+            }
           } else {
-            _showSnackbar('Unknown user role. Please contact support.');
+            _showSnackbar('User role not found. Please contact support.');
+            await FirebaseAuth.instance.signOut();
           }
         } else {
           _showSnackbar('User data not found. Please contact support.');
+          await FirebaseAuth.instance.signOut();
         }
       } else {
         _showSnackbar('Please verify your email then login. Also, please check spam messages.');
