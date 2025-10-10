@@ -10,6 +10,11 @@ import 'dart:math';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:grademate/models/file_models.dart'; // Make sure this path is correct
 
 class FacultyCoursesPage extends StatefulWidget {
   const FacultyCoursesPage({super.key});
@@ -22,6 +27,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
   int _selectedIndex = 1;
   String? collegeId;
@@ -47,12 +53,68 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   void initState() {
     super.initState();
     _loadUserData();
+    _initializeNotifications();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _initializeNotifications() {
+    flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initSettings =
+        InitializationSettings(android: androidSettings);
+    flutterLocalNotificationsPlugin.initialize(initSettings);
+  }
+
+  // --- Notification Helper Functions ---
+  Future<void> _showProgressNotification(String title, String fileName,
+      int progress, int notificationId) async {
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'progress_channel_id',
+      'Progress Channel',
+      channelDescription: 'Shows progress of uploads/downloads',
+      importance: Importance.low,
+      priority: Priority.low,
+      onlyAlertOnce: true,
+      showProgress: true,
+      maxProgress: 100,
+      progress: progress,
+      ongoing: true,
+      autoCancel: false,
+    );
+    final NotificationDetails platformDetails =
+        NotificationDetails(android: androidDetails);
+    await flutterLocalNotificationsPlugin.show(
+      notificationId,
+      title,
+      '$fileName: $progress%',
+      platformDetails,
+    );
+  }
+
+  Future<void> _showCompletionNotification(
+      String title, String fileName, int notificationId) async {
+    await flutterLocalNotificationsPlugin.cancel(notificationId);
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'completion_channel_id',
+      'Completion Channel',
+      channelDescription: 'Notifies when an operation is finished',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    final NotificationDetails platformDetails =
+        NotificationDetails(android: androidDetails);
+    await flutterLocalNotificationsPlugin.show(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title,
+      '"$fileName" has finished successfully.',
+      platformDetails,
+    );
   }
 
   Future<void> _loadUserData() async {
@@ -219,9 +281,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         'fullname': fullName,
       });
 
-      await _firestore.collection('colleges').doc(collegeId).update({
-        'branches': FieldValue.arrayUnion([shortName]),
-      });
+      await _firestore
+          .collection('colleges')
+          .doc(collegeId)
+          .update({'branches': FieldValue.arrayUnion([shortName])});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -306,8 +369,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       }
 
       final collegeDocRef = _firestore.collection('colleges').doc(collegeId);
-      batch.update(
-          collegeDocRef, {'regulations': FieldValue.arrayUnion([regulationName])});
+      batch.update(collegeDocRef,
+          {'regulations': FieldValue.arrayUnion([regulationName])});
 
       await batch.commit();
 
@@ -493,22 +556,23 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         File file = File(result.files.single.path!);
         String fileName = result.files.single.name;
         int fileSize = result.files.single.size;
-
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(),
-          ),
-        );
+        String fileType = result.files.single.extension ?? '';
 
         String filePath =
             'courses/$collegeId/$currentBranch/$currentRegulation/$currentYear/$currentSubject/$fileName';
-        TaskSnapshot uploadTask = await _storage.ref(filePath).putFile(file);
-        String downloadURL = await uploadTask.ref.getDownloadURL();
+        final uploadTask = _storage.ref(filePath).putFile(file);
+
+        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+          final progress =
+              (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt();
+          _showProgressNotification('Uploading', fileName, progress, 1);
+        });
+
+        final snapshot = await uploadTask.whenComplete(() => {});
+        final downloadURL = await snapshot.ref.getDownloadURL();
 
         await _getFilesCollectionRef().add({
-          'type': 'file',
+          'type': fileType,
           'fileName': fileName,
           'fileURL': downloadURL,
           'size': fileSize,
@@ -519,16 +583,19 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           'timestamp': FieldValue.serverTimestamp(),
         });
 
-        Navigator.pop(context);
+        await _showCompletionNotification('Upload Complete', fileName, 1);
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('File uploaded successfully')),
         );
       }
     } catch (e) {
-      if (context.mounted) Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error uploading file: $e')),
-      );
+      await flutterLocalNotificationsPlugin.cancel(1);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error uploading file: $e')),
+        );
+      }
     }
   }
 
@@ -596,13 +663,92 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         .collection('files');
   }
 
-  Future<void> _openFile(String url) async {
+  Future<void> _downloadFile(DocumentSnapshot doc) async {
+    try {
+      final data = doc.data() as Map<String, dynamic>;
+      final fileName = data['fileName'];
+      final url = data['fileURL'];
+
+      final dio = Dio();
+      final Directory? downloadsDir = await getExternalStorageDirectory();
+      if (downloadsDir == null) {
+        throw Exception('Could not get download directory.');
+      }
+      final gradeMateDir = Directory('${downloadsDir.path}/GradeMate');
+      if (!await gradeMateDir.exists()) {
+        await gradeMateDir.create(recursive: true);
+      }
+
+      final filePath = '${gradeMateDir.path}/$fileName';
+
+      await dio.download(
+        url,
+        filePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            final progress = (received / total * 100).toInt();
+            _showProgressNotification('Downloading', fileName, progress, 2);
+          }
+        },
+      );
+
+      await _showCompletionNotification('Download Complete', fileName, 2);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('File saved to GradeMate folder!'),
+        backgroundColor: Colors.green,
+      ));
+    } catch (e) {
+      await flutterLocalNotificationsPlugin.cancel(2);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Error downloading file: $e'),
+            backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _shareFile(DocumentSnapshot doc) async {
+    try {
+      final data = doc.data() as Map<String, dynamic>;
+      final fileName = data['fileName'];
+      final url = data['fileURL'];
+
+      final dio = Dio();
+      final dir = await getTemporaryDirectory();
+      final tempFilePath = '${dir.path}/$fileName';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preparing file for sharing...')));
+      await dio.download(url, tempFilePath);
+
+      await Share.shareXFiles([XFile(tempFilePath)],
+          text: 'Check out this file from GradeMate: $fileName');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Failed to share file: $e'),
+            backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _openExternalUrl(String? url) async {
+    if (url == null || url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error: URL is missing or invalid.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open file: $url')),
+        SnackBar(content: Text('Could not open URL: $url')),
       );
     }
   }
@@ -620,14 +766,14 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
 
     final renameController =
-        TextEditingController(text: fileDoc['fileName']);
+        TextEditingController(text: fileData['fileName'] ?? fileData['title']);
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Rename File'),
+        title: Text('Rename ${fileData['type'] == 'link' ? 'Link' : 'File'}'),
         content: TextField(
           controller: renameController,
-          decoration: const InputDecoration(labelText: 'New file name'),
+          decoration: const InputDecoration(labelText: 'New name'),
         ),
         actions: [
           TextButton(
@@ -638,8 +784,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             child: const Text('Rename'),
             onPressed: () {
               if (renameController.text.isNotEmpty) {
+                final fieldToUpdate =
+                    fileData['type'] == 'link' ? 'title' : 'fileName';
                 fileDoc.reference
-                    .update({'fileName': renameController.text.trim()});
+                    .update({fieldToUpdate: renameController.text.trim()});
                 Navigator.pop(context);
               }
             },
@@ -768,7 +916,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                 ElevatedButton(
                   child: const Text('Save'),
                   onPressed: () {
-                    _updateAccess(doc, isSharedWithStudents, isSharedWithFaculty);
+                    _updateAccess(
+                        doc, isSharedWithStudents, isSharedWithFaculty);
                     Navigator.pop(context);
                   },
                 ),
@@ -862,7 +1011,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               await _storage.refFromURL(data['fileURL']).delete();
             } catch (e) {
               print(
-                  "Could not delete file from storage (might have been already deleted): $e");
+                  "Could not delete file from storage (already deleted?): $e");
             }
           }
           batch.delete(doc.reference);
@@ -1269,7 +1418,35 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             final doc = visibleItems[index];
             final data = doc.data() as Map<String, dynamic>;
             if (data['type'] == 'link') {
-              return _buildLinkTile(doc);
+              final url = data['url'];
+              final videoId = YoutubePlayer.convertUrlToId(url);
+              if (videoId != null) {
+                return YoutubeLinkTile(
+                  doc: doc,
+                  isSelected: _selectedItemIds.contains(doc.id),
+                  onTap: () => _toggleSelection(doc.id),
+                  onLongPress: () => _toggleSelection(doc.id),
+                  onDelete: _confirmDeleteFile,
+                  onEditAccess: _showEditAccessDialog,
+                );
+              } else {
+                return RegularLinkTile(
+                  doc: doc,
+                  isSelected: _selectedItemIds.contains(doc.id),
+                  onTap: () {
+                    if (_isSelectionMode) {
+                      _toggleSelection(doc.id);
+                    } else {
+                      context.push('/file_viewer',
+                          extra: FileData.fromFirestore(doc));
+                    }
+                  },
+                  onLongPress: () => _toggleSelection(doc.id),
+                  onDelete: _confirmDeleteFile,
+                  onEditAccess: _showEditAccessDialog,
+                  onOpenExternal: _openExternalUrl,
+                );
+              }
             } else {
               return _buildFileTile(doc);
             }
@@ -1302,7 +1479,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           if (_isSelectionMode) {
             _toggleSelection(doc.id);
           } else {
-            _openFile(fileData['fileURL']);
+            context.push('/file_viewer', extra: FileData.fromFirestore(doc));
           }
         },
         onLongPress: () {
@@ -1311,11 +1488,15 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         trailing: !_isSelectionMode
             ? PopupMenuButton<String>(
                 onSelected: (value) {
+                  if (value == 'download') _downloadFile(doc);
+                  if (value == 'share') _shareFile(doc);
                   if (value == 'rename') _showRenameDialog(doc);
                   if (value == 'delete') _confirmDeleteFile(doc);
                   if (value == 'edit_access') _showEditAccessDialog(doc);
                 },
                 itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'download', child: Text('Download')),
+                  const PopupMenuItem(value: 'share', child: Text('Share')),
                   const PopupMenuItem(value: 'rename', child: Text('Rename')),
                   const PopupMenuItem(
                       value: 'edit_access', child: Text('Edit Access')),
@@ -1323,61 +1504,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                 ],
               )
             : null,
-      ),
-    );
-  }
-
-  Widget _buildLinkTile(DocumentSnapshot doc) {
-    final linkData = doc.data() as Map<String, dynamic>;
-    final url = linkData['url'];
-    final videoId = YoutubePlayer.convertUrlToId(url);
-    final isSelected = _selectedItemIds.contains(doc.id);
-
-    Widget buildContent() {
-      if (videoId != null) {
-        final controller = YoutubePlayerController(
-          initialVideoId: videoId,
-          flags: const YoutubePlayerFlags(autoPlay: false, mute: false),
-        );
-        return Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Video Link',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              YoutubePlayer(
-                  controller: controller, showVideoProgressIndicator: true),
-            ],
-          ),
-        );
-      } else {
-        return ListTile(
-          leading: isSelected
-              ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
-              : Icon(Icons.link, color: Colors.green[800], size: 40),
-          title: Text(linkData['title'] ?? 'Web Link'),
-          subtitle: Text(url ?? '', overflow: TextOverflow.ellipsis),
-        );
-      }
-    }
-
-    return Card(
-      color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: InkWell(
-        onTap: () {
-          if (_isSelectionMode) {
-            _toggleSelection(doc.id);
-          } else if (videoId == null) {
-            _openFile(url);
-          }
-        },
-        onLongPress: () {
-          _toggleSelection(doc.id);
-        },
-        child: buildContent(),
       ),
     );
   }
@@ -1535,6 +1661,159 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           selectedIndex: _selectedIndex,
           onItemTapped: _onItemTapped,
         ),
+      ),
+    );
+  }
+}
+
+// Dedicated StatefulWidget for YouTube links to manage controller lifecycle
+class YoutubeLinkTile extends StatefulWidget {
+  final DocumentSnapshot doc;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final Function(DocumentSnapshot) onDelete;
+  final Function(DocumentSnapshot) onEditAccess;
+
+  const YoutubeLinkTile({
+    super.key,
+    required this.doc,
+    required this.isSelected,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onDelete,
+    required this.onEditAccess,
+  });
+
+  @override
+  State<YoutubeLinkTile> createState() => _YoutubeLinkTileState();
+}
+
+class _YoutubeLinkTileState extends State<YoutubeLinkTile> {
+  late final YoutubePlayerController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final linkData = widget.doc.data() as Map<String, dynamic>;
+    final videoId = YoutubePlayer.convertUrlToId(linkData['url']);
+
+    _controller = YoutubePlayerController(
+      initialVideoId: videoId!,
+      flags: const YoutubePlayerFlags(
+        autoPlay: false,
+        mute: false,
+        forceHD: false,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: widget.isSelected ? Colors.blue.withOpacity(0.2) : null,
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: InkWell(
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Video Link',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  if (!widget.isSelected)
+                    PopupMenuButton<String>(
+                      onSelected: (value) {
+                        if (value == 'delete') widget.onDelete(widget.doc);
+                        if (value == 'edit_access') widget.onEditAccess(widget.doc);
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                            value: 'edit_access', child: Text('Edit Access')),
+                        const PopupMenuItem(
+                            value: 'delete', child: Text('Delete')),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              YoutubePlayer(
+                controller: _controller,
+                showVideoProgressIndicator: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Dedicated StatelessWidget for regular web links
+class RegularLinkTile extends StatelessWidget {
+  final DocumentSnapshot doc;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final Function(DocumentSnapshot) onDelete;
+  final Function(DocumentSnapshot) onEditAccess;
+  final Function(String?) onOpenExternal;
+
+  const RegularLinkTile({
+    super.key,
+    required this.doc,
+    required this.isSelected,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onDelete,
+    required this.onEditAccess,
+    required this.onOpenExternal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final linkData = doc.data() as Map<String, dynamic>;
+    final url = linkData['url'];
+
+    return Card(
+      color: isSelected ? Colors.blue.withOpacity(0.2) : null,
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: ListTile(
+        leading: isSelected
+            ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
+            : Icon(Icons.link, color: Colors.green[800], size: 40),
+        title: Text(linkData['title'] ?? 'Web Link'),
+        subtitle: Text(url ?? '', overflow: TextOverflow.ellipsis),
+        onTap: onTap,
+        onLongPress: onLongPress,
+        trailing: !isSelected
+            ? PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'open_external') onOpenExternal(url);
+                  if (value == 'delete') onDelete(doc);
+                  if (value == 'edit_access') onEditAccess(doc);
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                      value: 'open_external',
+                      child: Text('Open in Browser')),
+                  const PopupMenuItem(
+                      value: 'edit_access', child: Text('Edit Access')),
+                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              )
+            : null,
       ),
     );
   }
