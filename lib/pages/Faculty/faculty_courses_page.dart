@@ -7,14 +7,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:grademate/widgets/bottom_nav_bar.dart';
 import 'dart:io';
 import 'dart:math';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:grademate/models/file_models.dart'; // Make sure this path is correct
+import 'package:grademate/models/file_models.dart';
 
 class FacultyCoursesPage extends StatefulWidget {
   const FacultyCoursesPage({super.key});
@@ -840,7 +839,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     try {
       final data = doc.data() as Map<String, dynamic>;
 
-      if (data['type'] == 'file' && data['fileURL'] != null) {
+      if (data['type'] != 'link' && data['fileURL'] != null) {
         await _storage.refFromURL(data['fileURL']).delete();
       }
 
@@ -1006,7 +1005,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         final data = doc.data() as Map<String, dynamic>;
 
         if (data['ownerEmail'] == _auth.currentUser?.email) {
-          if (data['type'] == 'file' && data['fileURL'] != null) {
+          if (data['type'] != 'link' && data['fileURL'] != null) {
             try {
               await _storage.refFromURL(data['fileURL']).delete();
             } catch (e) {
@@ -1131,25 +1130,23 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemCount: branches.length,
           itemBuilder: (context, index) {
             var branch = branches[index].data() as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: ListTile(
-                leading: Icon(Icons.folder_copy_outlined,
-                    color: Colors.blue[800], size: 32),
-                title: Text(
-                  branch['name'] ?? 'No Name',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                subtitle: Text(branch['fullname'] ?? 'No full name provided'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  setState(() {
-                    currentBranch = branch['name'];
-                    breadcrumbs.add(branch['name']);
-                  });
-                },
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              leading: Icon(Icons.folder_copy_outlined,
+                  color: Colors.blue[800], size: 32),
+              title: Text(
+                branch['name'] ?? 'No Name',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
               ),
+              subtitle: Text(branch['fullname'] ?? 'No full name provided'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                setState(() {
+                  currentBranch = branch['name'];
+                  breadcrumbs.add(branch['name']);
+                });
+              },
             );
           },
         );
@@ -1193,28 +1190,34 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         }
 
         var regulations = snapshot.data!.docs;
+        if (searchQuery.isNotEmpty) {
+          regulations = regulations.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final name = data['name']?.toString().toLowerCase() ?? '';
+            return name.contains(searchQuery.toLowerCase());
+          }).toList();
+        }
+
         return ListView.builder(
           itemCount: regulations.length,
           itemBuilder: (context, index) {
             var regulation = regulations[index].data() as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: ListTile(
-                leading: Icon(Icons.gavel_outlined,
-                    color: Colors.orange[800], size: 32),
-                title: Text(
-                  regulation['name'] ?? regulations[index].id,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  setState(() {
-                    currentRegulation = regulations[index].id;
-                    breadcrumbs.add(regulations[index].id);
-                  });
-                },
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              leading: Icon(Icons.gavel_outlined,
+                  color: Colors.orange[800], size: 32),
+              title: Text(
+                regulation['name'] ?? regulations[index].id,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
               ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                setState(() {
+                  currentRegulation = regulations[index].id;
+                  breadcrumbs.add(regulations[index].id);
+                });
+              },
             );
           },
         );
@@ -1259,28 +1262,34 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           );
         }
         var years = snapshot.data!.docs;
+        if (searchQuery.isNotEmpty) {
+          years = years.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final name = data['name']?.toString().toLowerCase() ?? '';
+            return name.contains(searchQuery.toLowerCase());
+          }).toList();
+        }
+
         return ListView.builder(
           itemCount: years.length,
           itemBuilder: (context, index) {
             var year = years[index].data() as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: ListTile(
-                leading: Icon(Icons.school_outlined,
-                    color: Colors.purple[800], size: 32),
-                title: Text(
-                  year['name'] ?? years[index].id,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  setState(() {
-                    currentYear = years[index].id;
-                    breadcrumbs.add(years[index].id);
-                  });
-                },
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              leading: Icon(Icons.school_outlined,
+                  color: Colors.purple[800], size: 32),
+              title: Text(
+                year['name'] ?? years[index].id,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
               ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                setState(() {
+                  currentYear = years[index].id;
+                  breadcrumbs.add(years[index].id);
+                });
+              },
             );
           },
         );
@@ -1327,29 +1336,34 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           }
 
           var subjects = snapshot.data!.docs;
+          if (searchQuery.isNotEmpty) {
+            subjects = subjects.where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final name = data['name']?.toString().toLowerCase() ?? '';
+              return name.contains(searchQuery.toLowerCase());
+            }).toList();
+          }
+
           return ListView.builder(
             itemCount: subjects.length,
             itemBuilder: (context, index) {
               var subject = subjects[index].data() as Map<String, dynamic>;
-              return Card(
-                margin:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: ListTile(
-                  leading: Icon(Icons.menu_book_outlined,
-                      color: Colors.green[800], size: 32),
-                  title: Text(
-                    subject['name'] ?? subjects[index].id,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    setState(() {
-                      currentSubject = subjects[index].id;
-                      breadcrumbs.add(subjects[index].id);
-                    });
-                  },
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                leading: Icon(Icons.menu_book_outlined,
+                    color: Colors.green[800], size: 32),
+                title: Text(
+                  subject['name'] ?? subjects[index].id,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16),
                 ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  setState(() {
+                    currentSubject = subjects[index].id;
+                    breadcrumbs.add(subjects[index].id);
+                  });
+                },
               );
             },
           );
@@ -1388,22 +1402,32 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         final allItems = snapshot.data!.docs;
         final currentUserEmail = _auth.currentUser?.email;
 
-        final visibleItems = allItems.where((doc) {
+        var visibleItems = allItems.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
           final sharedWith = List<String>.from(data['sharedWith'] ?? []);
           final ownerEmail = data['ownerEmail'];
           return sharedWith.contains('Faculty') || ownerEmail == currentUserEmail;
         }).toList();
 
+        if (searchQuery.isNotEmpty) {
+          visibleItems = visibleItems.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final title =
+                (data['fileName'] ?? data['title'])?.toString().toLowerCase() ??
+                    '';
+            return title.contains(searchQuery.toLowerCase());
+          }).toList();
+        }
+
         if (visibleItems.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.visibility_off_outlined,
+                Icon(Icons.search_off,
                     size: 64, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text('No files shared with faculty in this folder.',
+                Text('No items match your search.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey[600], fontSize: 16)),
               ],
@@ -1417,36 +1441,24 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemBuilder: (context, index) {
             final doc = visibleItems[index];
             final data = doc.data() as Map<String, dynamic>;
+            final isSelected = _selectedItemIds.contains(doc.id);
+
             if (data['type'] == 'link') {
-              final url = data['url'];
-              final videoId = YoutubePlayer.convertUrlToId(url);
-              if (videoId != null) {
-                return YoutubeLinkTile(
-                  doc: doc,
-                  isSelected: _selectedItemIds.contains(doc.id),
-                  onTap: () => _toggleSelection(doc.id),
-                  onLongPress: () => _toggleSelection(doc.id),
-                  onDelete: _confirmDeleteFile,
-                  onEditAccess: _showEditAccessDialog,
-                );
-              } else {
-                return RegularLinkTile(
-                  doc: doc,
-                  isSelected: _selectedItemIds.contains(doc.id),
-                  onTap: () {
-                    if (_isSelectionMode) {
-                      _toggleSelection(doc.id);
-                    } else {
-                      context.push('/file_viewer',
-                          extra: FileData.fromFirestore(doc));
-                    }
-                  },
-                  onLongPress: () => _toggleSelection(doc.id),
-                  onDelete: _confirmDeleteFile,
-                  onEditAccess: _showEditAccessDialog,
-                  onOpenExternal: _openExternalUrl,
-                );
-              }
+              return RegularLinkTile(
+                doc: doc,
+                isSelected: isSelected,
+                onTap: () {
+                  if (_isSelectionMode) {
+                    _toggleSelection(doc.id);
+                  } else {
+                    _openExternalUrl(data['url']);
+                  }
+                },
+                onLongPress: () => _toggleSelection(doc.id),
+                onDelete: _confirmDeleteFile,
+                onEditAccess: _showEditAccessDialog,
+                onOpenExternal: _openExternalUrl,
+              );
             } else {
               return _buildFileTile(doc);
             }
@@ -1456,55 +1468,93 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     );
   }
 
+  IconData _getFileIcon(String? fileType) {
+    switch (fileType?.toLowerCase()) {
+      case 'pdf':
+        return Icons.picture_as_pdf;
+      case 'doc':
+      case 'docx':
+        return Icons.description;
+      case 'ppt':
+      case 'pptx':
+        return Icons.slideshow;
+      case 'xls':
+      case 'xlsx':
+        return Icons.table_chart;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+        return Icons.image;
+      case 'mp4':
+      case 'mov':
+      case 'avi':
+        return Icons.movie;
+      case 'zip':
+      case 'rar':
+        return Icons.archive;
+      default:
+        return Icons.insert_drive_file;
+    }
+  }
+
   Widget _buildFileTile(DocumentSnapshot doc) {
     final fileData = doc.data() as Map<String, dynamic>;
     final size = fileData['size'] != null ? _formatBytes(fileData['size']) : '';
     final owner = fileData['ownerName'] ?? 'Unknown';
     final isSelected = _selectedItemIds.contains(doc.id);
 
-    return Card(
-      color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: ListTile(
-        leading: isSelected
-            ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
-            : Icon(Icons.article_outlined, color: Colors.blue[800], size: 40),
-        title: Text(
-          fileData['fileName'] ?? 'Untitled File',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text('$size - by $owner'),
-        onTap: () {
-          if (_isSelectionMode) {
-            _toggleSelection(doc.id);
-          } else {
-            context.push('/file_viewer', extra: FileData.fromFirestore(doc));
-          }
-        },
-        onLongPress: () {
-          _toggleSelection(doc.id);
-        },
-        trailing: !_isSelectionMode
-            ? PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'download') _downloadFile(doc);
-                  if (value == 'share') _shareFile(doc);
-                  if (value == 'rename') _showRenameDialog(doc);
-                  if (value == 'delete') _confirmDeleteFile(doc);
-                  if (value == 'edit_access') _showEditAccessDialog(doc);
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'download', child: Text('Download')),
-                  const PopupMenuItem(value: 'share', child: Text('Share')),
-                  const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                  const PopupMenuItem(
-                      value: 'edit_access', child: Text('Edit Access')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                ],
-              )
-            : null,
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      leading: isSelected
+          ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
+          : Icon(_getFileIcon(fileData['type']),
+              color: Colors.blue[800], size: 40),
+      title: Text(
+        fileData['fileName'] ?? 'Untitled File',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
+      subtitle: Text('$size - by $owner'),
+      onTap: () {
+        if (_isSelectionMode) {
+          _toggleSelection(doc.id);
+        } else {
+          final file = FileData(
+            id: doc.id,
+            name: fileData['fileName'] ?? 'Untitled',
+            url: fileData['fileURL'] ?? '',
+            type: fileData['type'] ?? 'unknown',
+            size: fileData['size'] ?? 0,
+            uploadedAt: fileData['timestamp'] ?? Timestamp.now(),
+            ownerId: fileData['uploadedBy'] ?? '',
+            ownerName: owner,
+          );
+          context.push('/file_viewer', extra: file);
+        }
+      },
+      onLongPress: () {
+        _toggleSelection(doc.id);
+      },
+      trailing: !_isSelectionMode
+          ? PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'download') _downloadFile(doc);
+                if (value == 'share') _shareFile(doc);
+                if (value == 'rename') _showRenameDialog(doc);
+                if (value == 'delete') _confirmDeleteFile(doc);
+                if (value == 'edit_access') _showEditAccessDialog(doc);
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'download', child: Text('Download')),
+                const PopupMenuItem(value: 'share', child: Text('Share')),
+                const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                const PopupMenuItem(
+                    value: 'edit_access', child: Text('Edit Access')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            )
+          : null,
     );
   }
 
@@ -1524,7 +1574,63 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           fontWeight: FontWeight.bold,
         ),
       ),
+      actions: [
+        if (userRole == 'Faculty' && !_isSelectionMode)
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline, color: Colors.black),
+            onPressed: () {
+              if (currentSubject != null) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("Add Content"),
+                    content: SizedBox(
+                      width: MediaQuery.of(context).size.width * 0.8,
+                      height: MediaQuery.of(context).size.height * 0.2,
+                      child: GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        children: [
+                          _buildAddItem(Icons.upload_file, 'Upload File', () {
+                            Navigator.pop(context);
+                            _uploadFile();
+                          }),
+                          _buildAddItem(Icons.add_link, 'Add Link', () {
+                            Navigator.pop(context);
+                            _showAddLinkDialog();
+                          }),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              } else if (currentYear != null) {
+                _showAddSubjectDialog();
+              } else if (currentRegulation != null) {
+                _showAddYearDialog();
+              } else if (currentBranch != null) {
+                _showAddRegulationDialog();
+              } else {
+                _showAddBranchDialog();
+              }
+            },
+          )
+      ],
       centerTitle: true,
+    );
+  }
+
+  Widget _buildAddItem(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 40, color: Colors.blue[800]),
+          const SizedBox(height: 8),
+          Text(label),
+        ],
+      ),
     );
   }
 
@@ -1577,46 +1683,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         appBar: _isSelectionMode && currentSubject != null
             ? _buildSelectionAppBar()
             : _buildDefaultAppBar(),
-        floatingActionButton: userRole == 'Faculty' && !_isSelectionMode
-            ? FloatingActionButton(
-                onPressed: () {
-                  if (currentSubject != null) {
-                    showModalBottomSheet(
-                      context: context,
-                      builder: (context) => Wrap(
-                        children: [
-                          ListTile(
-                            leading: const Icon(Icons.upload_file),
-                            title: const Text('Upload File'),
-                            onTap: () {
-                              Navigator.pop(context);
-                              _uploadFile();
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.add_link),
-                            title: const Text('Add Link'),
-                            onTap: () {
-                              Navigator.pop(context);
-                              _showAddLinkDialog();
-                            },
-                          ),
-                        ],
-                      ),
-                    );
-                  } else if (currentYear != null) {
-                    _showAddSubjectDialog();
-                  } else if (currentRegulation != null) {
-                    _showAddYearDialog();
-                  } else if (currentBranch != null) {
-                    _showAddRegulationDialog();
-                  } else {
-                    _showAddBranchDialog();
-                  }
-                },
-                child: const Icon(Icons.add),
-              )
-            : null,
         body: Column(
           children: [
             _buildBreadcrumbs(),
@@ -1660,100 +1726,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         bottomNavigationBar: BottomNavBar(
           selectedIndex: _selectedIndex,
           onItemTapped: _onItemTapped,
-        ),
-      ),
-    );
-  }
-}
-
-// Dedicated StatefulWidget for YouTube links to manage controller lifecycle
-class YoutubeLinkTile extends StatefulWidget {
-  final DocumentSnapshot doc;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-  final Function(DocumentSnapshot) onDelete;
-  final Function(DocumentSnapshot) onEditAccess;
-
-  const YoutubeLinkTile({
-    super.key,
-    required this.doc,
-    required this.isSelected,
-    required this.onTap,
-    required this.onLongPress,
-    required this.onDelete,
-    required this.onEditAccess,
-  });
-
-  @override
-  State<YoutubeLinkTile> createState() => _YoutubeLinkTileState();
-}
-
-class _YoutubeLinkTileState extends State<YoutubeLinkTile> {
-  late final YoutubePlayerController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    final linkData = widget.doc.data() as Map<String, dynamic>;
-    final videoId = YoutubePlayer.convertUrlToId(linkData['url']);
-
-    _controller = YoutubePlayerController(
-      initialVideoId: videoId!,
-      flags: const YoutubePlayerFlags(
-        autoPlay: false,
-        mute: false,
-        forceHD: false,
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: widget.isSelected ? Colors.blue.withOpacity(0.2) : null,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: InkWell(
-        onTap: widget.onTap,
-        onLongPress: widget.onLongPress,
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Video Link',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  if (!widget.isSelected)
-                    PopupMenuButton<String>(
-                      onSelected: (value) {
-                        if (value == 'delete') widget.onDelete(widget.doc);
-                        if (value == 'edit_access') widget.onEditAccess(widget.doc);
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                            value: 'edit_access', child: Text('Edit Access')),
-                        const PopupMenuItem(
-                            value: 'delete', child: Text('Delete')),
-                      ],
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              YoutubePlayer(
-                controller: _controller,
-                showVideoProgressIndicator: true,
-              ),
-            ],
-          ),
         ),
       ),
     );
