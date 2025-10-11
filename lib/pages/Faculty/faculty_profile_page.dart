@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:grademate/widgets/bottom_nav_bar.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -16,7 +15,6 @@ class FacultyProfilePage extends StatefulWidget {
 }
 
 class _FacultyProfilePageState extends State<FacultyProfilePage> {
-  int _selectedIndex = 3;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
@@ -72,7 +70,9 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
   // --- NEW: Function to show options for changing profile picture ---
   void _showImageSourceActionSheet() {
     // A check to see if a custom profile picture is already set
-    bool hasValidImageUrl = _profileImageUrl != null && _profileImageUrl!.isNotEmpty && !_profileImageUrl!.contains("placehold.co");
+    bool hasValidImageUrl = _profileImageUrl != null &&
+        _profileImageUrl!.isNotEmpty &&
+        !_profileImageUrl!.contains("placehold.co");
 
     showModalBottomSheet(
       context: context,
@@ -91,7 +91,8 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
               if (hasValidImageUrl) // Only show remove option if a picture exists
                 ListTile(
                   leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                  title: const Text('Remove Photo',
+                      style: TextStyle(color: Colors.red)),
                   onTap: () {
                     Navigator.of(context).pop();
                     _removeProfileImage();
@@ -104,7 +105,6 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
     );
   }
 
-
   Future<void> _uploadProfileImage() async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) return;
@@ -114,13 +114,15 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
     final status = await Permission.photos.request();
 
     if (status.isGranted) {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+      final XFile? image =
+          await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
       if (image == null) return;
 
-      if(mounted) setState(() => _isLoading = true);
+      if (mounted) setState(() => _isLoading = true);
 
       try {
-        final ref = _storage.ref().child('profile_images').child('${user.uid}.jpg');
+        final ref =
+            _storage.ref().child('profile_images').child('${user.uid}.jpg');
         await ref.putFile(File(image.path));
         final url = await ref.getDownloadURL();
 
@@ -133,7 +135,8 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
             _profileImageUrl = url;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile picture updated successfully!')),
+            const SnackBar(
+                content: Text('Profile picture updated successfully!')),
           );
         }
       } catch (e) {
@@ -154,7 +157,9 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
       // Handle other cases where permission is not granted
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Photo library access is required to upload an image.')),
+          const SnackBar(
+              content: Text(
+                  'Photo library access is required to upload an image.')),
         );
       }
     }
@@ -165,17 +170,19 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
     final user = _auth.currentUser;
     if (user == null || user.email == null) return;
 
-    if(mounted) setState(() => _isLoading = true);
-    
+    if (mounted) setState(() => _isLoading = true);
+
     try {
       // Set a placeholder or null in Firestore
-      const placeholderUrl = 'https://placehold.co/400x400/000000/FFFFFF/png?text=User'; // Example placeholder
+      const placeholderUrl =
+          'https://placehold.co/400x400/000000/FFFFFF/png?text=User'; // Example placeholder
       await _firestore.collection('users').doc(user.email).update({
         'profileImageUrl': placeholderUrl,
       });
 
       // Delete the old image from Firebase Storage
-      final ref = _storage.ref().child('profile_images').child('${user.uid}.jpg');
+      final ref =
+          _storage.ref().child('profile_images').child('${user.uid}.jpg');
       await ref.delete();
 
       if (mounted) {
@@ -194,32 +201,29 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
         );
       }
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _logout() async {
     await _auth.signOut();
-    if(mounted){
-       context.go('/login');
+    if (mounted) {
+      context.go('/login');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    bool hasValidImageUrl = _profileImageUrl != null && _profileImageUrl!.isNotEmpty && !_profileImageUrl!.contains("placehold.co");
+    bool hasValidImageUrl = _profileImageUrl != null &&
+        _profileImageUrl!.isNotEmpty &&
+        !_profileImageUrl!.contains("placehold.co");
 
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
-            context.go('/faculty_home');
-          },
-        ),
+        automaticallyImplyLeading: false, // Important for shell route
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined, color: Colors.white),
@@ -296,7 +300,7 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
                         const EdgeInsets.fromLTRB(24.0, 80.0, 24.0, 20.0),
                     child: Column(
                       children: [
-                         Text(
+                        Text(
                           _name ?? 'Faculty Name',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
@@ -319,15 +323,15 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
                         _buildInfoCard(
                           context,
                           children: [
-                            _buildProfileDetail(
-                                Icons.person_outline, 'Name', _name ?? 'Not Set'),
+                            _buildProfileDetail(Icons.person_outline, 'Name',
+                                _name ?? 'Not Set'),
                             const Divider(),
-                            _buildProfileDetail(Icons.email_outlined,
-                                'Email', _email ?? 'Not Set'),
+                            _buildProfileDetail(Icons.email_outlined, 'Email',
+                                _email ?? 'Not Set'),
                             const Divider(),
                             _buildProfileDetail(Icons.work_outline,
                                 'Designation', _designation ?? 'Not Set'),
-                             const Divider(),
+                            const Divider(),
                             _buildProfileDetail(Icons.school_outlined,
                                 'Department', _department ?? 'Not Set'),
                           ],
@@ -337,7 +341,7 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
                           onPressed: _logout,
                           icon: const Icon(Icons.logout),
                           label: const Text('Log Out'),
-                           style: ElevatedButton.styleFrom(
+                          style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red.shade50,
                             foregroundColor: Colors.red.shade700,
                             minimumSize: const Size(double.infinity, 50),
@@ -352,20 +356,6 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
                 ],
               ),
             ),
-      bottomNavigationBar: BottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: (index) {
-          if (index == 0) {
-            context.go('/faculty_home');
-          } else if (index == 1) {
-            context.go('/faculty_courses');
-          } else if (index == 2) {
-            context.go('/faculty_my_files');
-          } else if (index == 3) {
-            // Stay on this page
-          }
-        },
-      ),
     );
   }
 

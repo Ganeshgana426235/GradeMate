@@ -17,8 +17,8 @@ class RemindersPage extends StatefulWidget {
   State<RemindersPage> createState() => _RemindersPageState();
 }
 
-// FIX: Add WidgetsBindingObserver to listen for app lifecycle changes
-class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserver {
+class _RemindersPageState extends State<RemindersPage>
+    with WidgetsBindingObserver {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   String? _userRole;
@@ -30,7 +30,6 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
   @override
   void initState() {
     super.initState();
-    // FIX: Add observer
     WidgetsBinding.instance.addObserver(this);
     _fetchUserRole();
     _initializeNotifications();
@@ -38,20 +37,17 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
 
   @override
   void dispose() {
-    // FIX: Remove observer
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  // FIX: New method to re-check permissions when user returns to the app
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _requestPermissions(); // Re-check permissions on resume
+      _requestPermissions();
     }
   }
 
-  /// ✅ Initializes local notifications and requests all necessary permissions.
   Future<void> _initializeNotifications() async {
     try {
       tz.initializeTimeZones();
@@ -65,7 +61,8 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
     const DarwinInitializationSettings initializationSettingsIOS =
         DarwinInitializationSettings();
 
-    const InitializationSettings initializationSettings = InitializationSettings(
+    const InitializationSettings initializationSettings =
+        InitializationSettings(
       android: initializationSettingsAndroid,
       iOS: initializationSettingsIOS,
     );
@@ -77,30 +74,26 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
 
     await _requestPermissions();
   }
-  
-  /// ✅ Handles all permission requests using permission_handler
+
   Future<void> _requestPermissions() async {
-    // 1. Standard Notification Permission
     if (await Permission.notification.isDenied) {
       await Permission.notification.request();
     }
 
-    // 2. Exact Alarm Permission
     var alarmStatus = await Permission.scheduleExactAlarm.status;
     if (alarmStatus.isDenied) {
       if (mounted) {
         await _showPermissionDialog(
           title: 'Alarm Permission Needed',
-          content: 'To ensure your reminders are perfectly on time, this app needs the "Alarms & Reminders" permission. Please tap "Open Settings" and enable it.',
+          content:
+              'To ensure your reminders are perfectly on time, this app needs the "Alarms & Reminders" permission. Please tap "Open Settings" and enable it.',
         );
       }
     }
   }
 
-  /// ✅ Explains why the permission is needed and sends user to settings.
-  Future<void> _showPermissionDialog({
-      required String title,
-      required String content}) async {
+  Future<void> _showPermissionDialog(
+      {required String title, required String content}) async {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -124,8 +117,8 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
             TextButton(
               child: const Text('Open Settings'),
               onPressed: () async {
-                  await openAppSettings();
-                  Navigator.of(context).pop();
+                await openAppSettings();
+                Navigator.of(context).pop();
               },
             ),
           ],
@@ -134,8 +127,6 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
     );
   }
 
-
-  /// ✅ Handles notification taps. When tapped, it will speak the reminder description.
   void onDidReceiveNotificationResponse(NotificationResponse response) async {
     if (response.payload != null && response.payload!.isNotEmpty) {
       await flutterTts.setPitch(1.0);
@@ -196,14 +187,16 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text(reminderDoc == null ? 'New Reminder' : 'Edit Reminder'),
+              title:
+                  Text(reminderDoc == null ? 'New Reminder' : 'Edit Reminder'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
                       controller: titleController,
-                      decoration: const InputDecoration(labelText: 'Reminder Title'),
+                      decoration:
+                          const InputDecoration(labelText: 'Reminder Title'),
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -284,17 +277,15 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () async { // Make async
+                  onPressed: () async {
                     if (titleController.text.isNotEmpty &&
                         descriptionController.text.isNotEmpty &&
                         selectedDate != null &&
                         selectedTime != null) {
-                      
-                      // FIX: Re-check permission right before scheduling
                       var status = await Permission.scheduleExactAlarm.status;
                       if (!status.isGranted) {
-                          _requestPermissions(); // Ask again if denied
-                          return;
+                        _requestPermissions();
+                        return;
                       }
 
                       final reminderDateTime = DateTime(
@@ -307,7 +298,8 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
 
                       if (reminderDateTime.isBefore(DateTime.now())) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('Cannot set a reminder for a past time.'),
+                          content:
+                              Text('Cannot set a reminder for a past time.'),
                           backgroundColor: Colors.orange,
                         ));
                         return;
@@ -343,40 +335,43 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
   }
 
   CollectionReference get _remindersCollection {
-      final user = _auth.currentUser;
-      if (user == null || user.email == null) {
-          throw Exception("User not logged in");
-      }
-      return _firestore
-          .collection('users')
-          .doc(user.email)
-          .collection('reminders');
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      throw Exception("User not logged in");
+    }
+    return _firestore
+        .collection('users')
+        .doc(user.email)
+        .collection('reminders');
   }
 
-
-  void _addReminder(String title, String description, DateTime reminderTime, String recurrence) async {
+  void _addReminder(String title, String description, DateTime reminderTime,
+      String recurrence) async {
     final notificationId = Random().nextInt(100000);
     try {
-        await _remindersCollection.add({
-          'title': title,
-          'description': description,
-          'reminderTime': Timestamp.fromDate(reminderTime),
-          'recurrence': recurrence,
-          'notificationId': notificationId,
-        });
+      await _remindersCollection.add({
+        'title': title,
+        'description': description,
+        'reminderTime': Timestamp.fromDate(reminderTime),
+        'recurrence': recurrence,
+        'notificationId': notificationId,
+      });
 
-        _scheduleNotification(notificationId, title, description, reminderTime, recurrence);
+      _scheduleNotification(
+          notificationId, title, description, reminderTime, recurrence);
     } catch (e) {
-        print("Error adding reminder: $e");
+      print("Error adding reminder: $e");
     }
   }
 
-  void _updateReminder(DocumentSnapshot doc, String title, String description, DateTime reminderTime, String recurrence) async {
+  void _updateReminder(DocumentSnapshot doc, String title, String description,
+      DateTime reminderTime, String recurrence) async {
     final data = doc.data() as Map<String, dynamic>;
-    final int oldNotificationId = data['notificationId'] ?? Random().nextInt(100000);
+    final int oldNotificationId =
+        data['notificationId'] ?? Random().nextInt(100000);
 
     await flutterLocalNotificationsPlugin.cancel(oldNotificationId);
-    
+
     final newNotificationId = Random().nextInt(100000);
 
     await doc.reference.update({
@@ -387,25 +382,45 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
       'notificationId': newNotificationId,
     });
 
-    _scheduleNotification(newNotificationId, title, description, reminderTime, recurrence);
+    _scheduleNotification(
+        newNotificationId, title, description, reminderTime, recurrence);
   }
 
-  /// ✅ Schedules the notification to fire like an alarm.
-  Future<void> _scheduleNotification(
-      int id, String title, String body, DateTime scheduledTime, String recurrence) async {
-    
+  Future<void> _scheduleNotification(int id, String title, String body,
+      DateTime scheduledTime, String recurrence) async {
     var status = await Permission.scheduleExactAlarm.status;
     if (!status.isGranted) {
-        print("Exact alarm permission not granted. Scheduling will fail.");
-        if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('Alarm permission is required for reminders.'),
-                backgroundColor: Colors.red,
-            ));
-        }
-        return; // Don't even try to schedule
+      print("Exact alarm permission not granted. Scheduling will fail.");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Alarm permission is required for reminders.'),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
     }
-    
+
+    // *** START: Add notification to Firestore ***
+    final user = _auth.currentUser;
+    if (user != null && user.email != null) {
+      try {
+        await _firestore
+            .collection('users')
+            .doc(user.email)
+            .collection('notifications')
+            .add({
+          'title': title,
+          'body': body,
+          'timestamp': Timestamp.fromDate(scheduledTime),
+          'type': 'reminder', // To identify the notification type
+          'isRead': false,
+        });
+      } catch (e) {
+        print("Error saving notification to Firestore: $e");
+      }
+    }
+    // *** END: Add notification to Firestore ***
+
     DateTimeComponents? dateTimeComponents;
     switch (recurrence) {
       case 'Daily':
@@ -421,7 +436,8 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
         dateTimeComponents = null; // For 'Once'
     }
 
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
       'alarm_channel_id',
       'Alarms',
       channelDescription: 'Channel for reminder alarms',
@@ -433,33 +449,34 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
       fullScreenIntent: true,
     );
 
-    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+    const NotificationDetails platformDetails =
+        NotificationDetails(android: androidDetails);
 
     final tz.TZDateTime tzTime = tz.TZDateTime.from(scheduledTime, tz.local);
     print('Scheduling notification for: $tzTime with ID: $id');
 
     try {
-        await flutterLocalNotificationsPlugin.zonedSchedule(
-          id,
-          title,
-          body,
-          tzTime,
-          platformDetails,
-          payload: body,
-          matchDateTimeComponents: dateTimeComponents,
-          androidScheduleMode: AndroidScheduleMode.alarmClock,
-        );
+      await flutterLocalNotificationsPlugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tzTime,
+        platformDetails,
+        payload: body,
+        matchDateTimeComponents: dateTimeComponents,
+        androidScheduleMode: AndroidScheduleMode.alarmClock,
+      );
     } catch (e) {
-        print("Error scheduling notification: $e");
+      print("Error scheduling notification: $e");
     }
   }
 
   void _deleteReminder(String docId, int notificationId) {
     try {
-        _remindersCollection.doc(docId).delete();
-        flutterLocalNotificationsPlugin.cancel(notificationId);
-    } catch(e) {
-        print("Error deleting reminder: $e");
+      _remindersCollection.doc(docId).delete();
+      flutterLocalNotificationsPlugin.cancel(notificationId);
+    } catch (e) {
+      print("Error deleting reminder: $e");
     }
   }
 
@@ -501,7 +518,8 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
-              return const Center(child: Text("Error loading reminders. Please log in again."));
+              return const Center(
+                  child: Text("Error loading reminders. Please log in again."));
             }
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return const Center(
@@ -522,14 +540,17 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
               itemBuilder: (context, index) {
                 final reminder = reminders[index];
                 final data = reminder.data() as Map<String, dynamic>;
-                final reminderTime = (data['reminderTime'] as Timestamp).toDate();
+                final reminderTime =
+                    (data['reminderTime'] as Timestamp).toDate();
                 final recurrence = data['recurrence'] ?? 'Once';
                 final notificationId = data['notificationId'] ?? 0;
 
                 return Card(
                   elevation: 2,
-                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                   child: InkWell(
                     onTap: () => _showReminderDialog(reminderDoc: reminder),
                     borderRadius: BorderRadius.circular(12),
@@ -546,10 +567,12 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
                               children: [
                                 Text(data['title'],
                                     style: const TextStyle(
-                                        fontWeight: FontWeight.bold, fontSize: 16)),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
                                 const SizedBox(height: 4),
                                 Text(data['description'],
-                                    style: const TextStyle(color: Colors.black54)),
+                                    style:
+                                        const TextStyle(color: Colors.black54)),
                                 const SizedBox(height: 8),
                                 Text(
                                   DateFormat('MMM d, yyyy \'at\' HH:mm')
@@ -584,4 +607,3 @@ class _RemindersPageState extends State<RemindersPage> with WidgetsBindingObserv
     );
   }
 }
-

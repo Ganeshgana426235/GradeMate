@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:grademate/widgets/bottom_nav_bar.dart';
 
 class StudentCoursesPage extends StatefulWidget {
   const StudentCoursesPage({super.key});
@@ -10,20 +8,12 @@ class StudentCoursesPage extends StatefulWidget {
 }
 
 class _StudentCoursesPageState extends State<StudentCoursesPage> {
-  int _selectedIndex = 1; // Index for the '2nd Option' tab
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () {
-            context.go('/student_home');
-          },
-        ),
         title: const Text(
           'Courses',
           style: TextStyle(
@@ -92,24 +82,11 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
           ],
         ),
       ),
-      bottomNavigationBar: BottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: (index) {
-          if (index == 0) {
-            context.go('/student_home');
-          } else if (index == 1) {
-            // Stay on this page
-          } else if (index == 2) {
-            context.go('/student_my_files');
-          } else if (index == 3) {
-            context.go('/student_profile');
-          }
-        },
-      ),
     );
   }
 
-  Widget _buildAcademicYearCard(String year, String courseSummary, List<Widget> courseTiles) {
+  Widget _buildAcademicYearCard(
+      String year, String courseSummary, List<Widget> courseTiles) {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(

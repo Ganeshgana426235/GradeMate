@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:grademate/widgets/bottom_nav_bar.dart';
-import 'package:grademate/pages/Student/student_my_files_page.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -11,26 +9,49 @@ class StudentHomePage extends StatefulWidget {
 }
 
 class _StudentHomePageState extends State<StudentHomePage> {
-  int _selectedIndex = 0;
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-
-    if (index == 0) {
-      context.go('/student_home');
-    } else if (index == 1) {
-      context.go('/student_courses');
-    } else if (index == 2) {
-      context.go('/student_my_files');
-    } else if (index == 3) {
-      context.go('/student_profile');
+  // Mapping of labels to their navigation logic
+  void _handleQuickAccessTap(String label) {
+    switch (label) {
+      case 'Assignments':
+        // Assuming a route '/student_assignments' exists for students
+        // context.push('/student_assignments');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Assignments page not yet implemented.')),
+        );
+        break;
+      case 'Downloads':
+        context.push('/downloads');
+        break;
+      case 'My Notes':
+        context.push('/my_notes');
+        break;
+      case 'Reminders':
+        context.push('/reminders');
+        break;
+      case 'My Files':
+        // This switches to the 3rd tab (index 2) in the student shell
+        StatefulNavigationShell.of(context).goBranch(2);
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$label is not yet implemented.')),
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Quick access items for the student homepage
+    final List<Map<String, dynamic>> quickAccessItems = [
+      {'icon': Icons.star_outline, 'label': 'Favorites'},
+      {'icon': Icons.assignment_outlined, 'label': 'Assignments'},
+      {'icon': Icons.download_outlined, 'label': 'Downloads'},
+      {'icon': Icons.folder_outlined, 'label': 'My Files'},
+      {'icon': Icons.people_alt_outlined, 'label': 'Shared Files'},
+      {'icon': Icons.note_alt_outlined, 'label': 'My Notes'},
+      {'icon': Icons.notifications_active_outlined, 'label': 'Reminders'},
+    ];
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -72,26 +93,28 @@ class _StudentHomePageState extends State<StudentHomePage> {
               ),
             ),
             const SizedBox(height: 12),
-            GridView.count(
-              crossAxisCount: 2,
+            GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 2.5,
+              ),
+              itemCount: quickAccessItems.length,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 2.5,
-              children: [
-                _buildQuickAccessCard(Icons.star_outline, 'Favorites'),
-                _buildQuickAccessCard(Icons.assignment_outlined, 'Assignments'),
-                _buildQuickAccessCard(Icons.download_outlined, 'Downloads'),
-                _buildQuickAccessCard(Icons.folder_outlined, 'My Files'),
-                _buildQuickAccessCard(Icons.people_alt_outlined, 'Shared Files'),
-                _buildQuickAccessCard(Icons.note_alt_outlined, 'My Notes'),
-                _buildQuickAccessCard(Icons.notifications_active_outlined, 'Reminders'),
-              ],
+              itemBuilder: (context, index) {
+                final item = quickAccessItems[index];
+                return _buildQuickAccessCard(
+                  item['icon'],
+                  item['label'],
+                  onTap: () => _handleQuickAccessTap(item['label']),
+                );
+              },
             ),
             const SizedBox(height: 32),
 
-            // Upcoming Section
+            // Upcoming Section (You can implement the same logic as the Faculty page here)
             const Text(
               'Upcoming',
               style: TextStyle(
@@ -125,7 +148,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
                   const SizedBox(width: 16),
                   _buildSharedNoteCard(Colors.green[50]!, 'English 202 Notes'),
                   const SizedBox(width: 16),
-                  _buildSharedNoteCard(Colors.orange[50]!, 'Science Lab Report'),
+                  _buildSharedNoteCard(
+                      Colors.orange[50]!, 'Science Lab Report'),
                 ],
               ),
             ),
@@ -141,20 +165,19 @@ class _StudentHomePageState extends State<StudentHomePage> {
               ),
             ),
             const SizedBox(height: 12),
-            _buildRecentlyAccessedCard('Physics Lab Report', 'Last opened 2 days ago'),
+            _buildRecentlyAccessedCard(
+                'Physics Lab Report', 'Last opened 2 days ago'),
             const SizedBox(height: 12),
-            _buildRecentlyAccessedCard('Chemistry Study Guide', 'Last opened 3 days ago'),
+            _buildRecentlyAccessedCard(
+                'Chemistry Study Guide', 'Last opened 3 days ago'),
           ],
         ),
-      ),
-      bottomNavigationBar: BottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: _onItemTapped,
       ),
     );
   }
 
-  Widget _buildQuickAccessCard(IconData icon, String label) {
+  Widget _buildQuickAccessCard(IconData icon, String label,
+      {VoidCallback? onTap}) {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -162,9 +185,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
         side: BorderSide(color: Colors.grey[200]!, width: 1),
       ),
       child: InkWell(
-        onTap: () {
-          // TODO: Implement quick access action
-        },
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12.0),
           child: Row(
@@ -245,8 +267,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
             ),
-            // Placeholder for the 3D art from the image
-            child: const Center(child: Icon(Icons.note_alt, size: 50, color: Colors.black26)),
+            child: const Center(
+                child: Icon(Icons.note_alt, size: 50, color: Colors.black26)),
           ),
           const SizedBox(height: 8),
           Text(

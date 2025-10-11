@@ -4,11 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:grademate/widgets/bottom_nav_bar.dart';
 import 'dart:io';
 import 'dart:math';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,7 +26,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
-  int _selectedIndex = 1;
   String? collegeId;
   String? userRole;
   String? userName;
@@ -180,22 +177,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           isLoading = false;
         });
       }
-    }
-  }
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-
-    if (index == 0) {
-      context.go('/faculty_home');
-    } else if (index == 1) {
-      // Stay on this page
-    } else if (index == 2) {
-      context.go('/faculty_my_files');
-    } else if (index == 3) {
-      context.go('/faculty_profile');
     }
   }
 
@@ -856,7 +837,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     if (ownerEmail != _auth.currentUser?.email) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Permission Denied: You are not the owner of this item.'),
+          content:
+              Text('Permission Denied: You are not the owner of this item.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -875,8 +857,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             onPressed: () => Navigator.pop(context, false),
           ),
           TextButton(
-            child:
-                const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
             onPressed: () => Navigator.pop(context, true),
           ),
         ],
@@ -899,7 +880,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       await doc.reference.delete();
 
       final itemName = data['fileName'] ?? data['title'] ?? data['url'];
-      _logActivity('Deleted Item', {'itemName': itemName, 'type': data['type']});
+      _logActivity(
+          'Deleted Item', {'itemName': itemName, 'type': data['type']});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1048,8 +1030,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             onPressed: () => Navigator.pop(context, false),
           ),
           TextButton(
-            child:
-                const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
             onPressed: () => Navigator.pop(context, true),
           ),
         ],
@@ -1461,7 +1442,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           final data = doc.data() as Map<String, dynamic>;
           final sharedWith = List<String>.from(data['sharedWith'] ?? []);
           final ownerEmail = data['ownerEmail'];
-          return sharedWith.contains('Faculty') || ownerEmail == currentUserEmail;
+          return sharedWith.contains('Faculty') ||
+              ownerEmail == currentUserEmail;
         }).toList();
 
         if (searchQuery.isNotEmpty) {
@@ -1479,8 +1461,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.search_off,
-                    size: 64, color: Colors.grey[400]),
+                Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text('No items match your search.',
                     textAlign: TextAlign.center,
@@ -1754,8 +1735,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       return Scaffold(
         appBar: AppBar(title: const Text("Courses")),
         body: const Center(
-          child:
-              Text("Error: College ID not found. Please check user data."),
+          child: Text("Error: College ID not found. Please check user data."),
         ),
       );
     }
@@ -1809,12 +1789,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             ),
           ],
         ),
-        bottomNavigationBar: BottomNavBar(
-          selectedIndex: _selectedIndex,
-          onItemTapped: _onItemTapped,
-        ),
       ),
     );
   }
 }
-

@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:grademate/widgets/bottom_nav_bar.dart';
 
 class StudentProfilePage extends StatefulWidget {
   const StudentProfilePage({super.key});
@@ -10,20 +8,12 @@ class StudentProfilePage extends StatefulWidget {
 }
 
 class _StudentProfilePageState extends State<StudentProfilePage> {
-  int _selectedIndex = 3; // Index for the 'Profile' tab
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () {
-            context.go('/student_home');
-          },
-        ),
         title: const Text(
           'Edit Profile',
           style: TextStyle(
@@ -44,7 +34,8 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
             const CircleAvatar(
               radius: 60,
               backgroundColor: Colors.grey,
-              backgroundImage: NetworkImage('https://placehold.co/120x120/cccccc/000000?text=Student'),
+              backgroundImage: NetworkImage(
+                  'https://placehold.co/120x120/cccccc/000000?text=Student'),
             ),
             const SizedBox(height: 16),
             const Text(
@@ -98,20 +89,6 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
           ],
         ),
       ),
-      bottomNavigationBar: BottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: (index) {
-          if (index == 0) {
-            context.go('/student_home');
-          } else if (index == 1) {
-            context.go('/student_courses');
-          } else if (index == 2) {
-             context.go('/student_my_files');
-          } else if (index == 3) {
-            // Stay on this page
-          }
-        },
-      ),
     );
   }
 
@@ -138,7 +115,8 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
             decoration: InputDecoration(
               hintText: hint,
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               prefixIcon: Icon(icon, color: Colors.grey),
             ),
           ),

@@ -14,6 +14,8 @@ import 'package:grademate/providers/auth_provider.dart' as AppAuthProvider;
 import 'package:grademate/pages/Authentication/login_page.dart';
 import 'package:grademate/pages/Authentication/forgot_password_page.dart';
 import 'package:grademate/pages/Authentication/register_page.dart';
+import 'package:grademate/pages/Student/student_shell.dart';
+import 'package:grademate/pages/Faculty/faculty_shell.dart';
 import 'package:grademate/pages/Student/student_home_page.dart';
 import 'package:grademate/pages/Student/student_courses_page.dart';
 import 'package:grademate/pages/Student/student_profile_page.dart';
@@ -32,8 +34,12 @@ import 'package:grademate/widgets/reminders_page.dart';
 import 'package:grademate/pages/Faculty/faculty_assignments_page.dart';
 import 'package:grademate/pages/Faculty/send_notification_page.dart';
 import 'package:grademate/pages/Faculty/manage_students_page.dart';
+import 'package:grademate/widgets/notifications_page.dart';
+
+final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final _router = GoRouter(
+  navigatorKey: _rootNavigatorKey,
   initialLocation: '/login',
   routes: [
     GoRoute(
@@ -53,14 +59,33 @@ final _router = GoRouter(
       builder: (context, state) => const ForgotPasswordPage(),
     ),
     GoRoute(
-      path: '/student_home',
-      builder: (context, state) => const StudentHomePage(),
+      path: '/notifications',
+      builder: (context, state) => const NotificationsPage(),
     ),
-    GoRoute(
-      path: '/student_courses',
-      builder: (context, state) => const StudentCoursesPage(),
-    ),
-    GoRoute(
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return StudentShell(navigationShell: navigationShell);
+      },
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/student_home',
+              builder: (context, state) => const StudentHomePage(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/student_courses',
+              builder: (context, state) => const StudentCoursesPage(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
       path: '/student_my_files',
       builder: (context, state) => const MyFilesPage(),
       routes: [
@@ -74,19 +99,42 @@ final _router = GoRouter(
         ),
       ],
     ),
-    GoRoute(
-      path: '/student_profile',
-      builder: (context, state) => const StudentProfilePage(),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/student_profile',
+              builder: (context, state) => const StudentProfilePage(),
+            ),
+          ],
+        ),
+      ],
     ),
-    GoRoute(
-      path: '/faculty_home',
-      builder: (context, state) => const FacultyHomePage(),
-    ),
-    GoRoute(
-      path: '/faculty_courses',
-      builder: (context, state) => const FacultyCoursesPage(),
-    ),
-    GoRoute(
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return FacultyShell(navigationShell: navigationShell);
+      },
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/faculty_home',
+              builder: (context, state) => const FacultyHomePage(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/faculty_courses',
+              builder: (context, state) => const FacultyCoursesPage(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+             GoRoute(
       path: '/faculty_my_files',
       builder: (context, state) => const FacultyMyFilesPage(),
       routes: [
@@ -100,17 +148,27 @@ final _router = GoRouter(
         ),
       ],
     ),
-    GoRoute(
-      path: '/faculty_profile',
-      builder: (context, state) => const FacultyProfilePage(),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/faculty_profile',
+              builder: (context, state) => const FacultyProfilePage(),
+            ),
+          ],
+        ),
+      ],
     ),
     GoRoute(
       path: '/file_details',
-      builder: (context, state) => FileDetailsPage(file: state.extra as FileData),
+      builder: (context, state) =>
+          FileDetailsPage(file: state.extra as FileData),
     ),
     GoRoute(
       path: '/file_viewer',
-      builder: (context, state) => FileViewerPage(file: state.extra as FileData),
+      builder: (context, state) =>
+          FileViewerPage(file: state.extra as FileData),
     ),
     GoRoute(
       path: '/downloads',
@@ -147,7 +205,8 @@ final _router = GoRouter(
     final isVerified = isAuthenticated ? user.emailVerified : false;
 
     // Check if Hive box is open, get role
-    final userBox = Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null;
+    final userBox =
+        Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null;
     final role = userBox?.get('role');
 
     final isAuthPage = [
@@ -191,7 +250,8 @@ void main() async {
   await _requestPermissions();
 
   tz.initializeTimeZones();
-  tz.setLocalLocation(tz.getLocation('Asia/Kolkata')); // Set for India Standard Time
+  tz.setLocalLocation(
+      tz.getLocation('Asia/Kolkata')); // Set for India Standard Time
 
   // [START HIVE INITIALIZATION]
   final appDocumentDir = await getApplicationDocumentsDirectory();
@@ -222,7 +282,6 @@ Future<void> _requestPermissions() async {
   print("Notification Permission: ${statuses[Permission.notification]}");
 }
 
-
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -243,4 +302,3 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-
