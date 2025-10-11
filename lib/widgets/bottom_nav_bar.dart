@@ -20,11 +20,11 @@ class BottomNavBar extends StatelessWidget {
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.menu_book_outlined),
-          label: '2nd Option',
+          label: 'My Course',
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.folder_open_outlined),
-          label: 'Files',
+          label: 'My Files',
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.person_outlined),

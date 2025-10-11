@@ -70,6 +70,34 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     flutterLocalNotificationsPlugin.initialize(initSettings);
   }
 
+  // --- Activity Logging ---
+  Future<void> _logActivity(String action, Map<String, dynamic> details) async {
+    if (_auth.currentUser == null || _auth.currentUser!.email == null) return;
+
+    final userEmail = _auth.currentUser!.email!;
+    final activityData = {
+      'userEmail': userEmail,
+      'userName': userName ?? 'Unknown',
+      'action': action,
+      'timestamp': FieldValue.serverTimestamp(),
+      'details': details,
+    };
+
+    try {
+      // Log to the main activities collection
+      await _firestore.collection('activities').add(activityData);
+
+      // Log to the user-specific activities subcollection
+      await _firestore
+          .collection('users')
+          .doc(userEmail)
+          .collection('activities')
+          .add(activityData);
+    } catch (e) {
+      print("Error logging activity: $e");
+    }
+  }
+
   // --- Notification Helper Functions ---
   Future<void> _showProgressNotification(String title, String fileName,
       int progress, int notificationId) async {
@@ -285,6 +313,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           .doc(collegeId)
           .update({'branches': FieldValue.arrayUnion([shortName])});
 
+      _logActivity(
+          'Created Branch', {'branchName': shortName, 'fullName': fullName});
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('Branch added successfully'),
@@ -372,6 +403,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           {'regulations': FieldValue.arrayUnion([regulationName])});
 
       await batch.commit();
+      _logActivity('Created Regulation',
+          {'regulationName': regulationName, 'scope': 'All Branches'});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -469,6 +502,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           collegeDocRef, {'courseYear': FieldValue.arrayUnion([yearName])});
 
       await batch.commit();
+      _logActivity('Created Year', {
+        'yearName': yearName,
+        'regulation': currentRegulation,
+        'scope': 'All Branches'
+      });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -536,6 +574,12 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           .set({
         'name': subjectName,
       });
+      _logActivity('Created Subject', {
+        'subjectName': subjectName,
+        'branch': currentBranch,
+        'regulation': currentRegulation,
+        'year': currentYear
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Subject added successfully')),
       );
@@ -582,6 +626,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           'timestamp': FieldValue.serverTimestamp(),
         });
 
+        _logActivity('Uploaded File', {'fileName': fileName, 'path': filePath});
         await _showCompletionNotification('Upload Complete', fileName, 1);
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -640,6 +685,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         'uploadedBy': _auth.currentUser?.email,
         'timestamp': FieldValue.serverTimestamp(),
       });
+      _logActivity('Added Link', {'url': url, 'subject': currentSubject});
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error adding link: $e')),
@@ -783,10 +829,17 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             child: const Text('Rename'),
             onPressed: () {
               if (renameController.text.isNotEmpty) {
+                final newName = renameController.text.trim();
+                final oldName = fileData['fileName'] ?? fileData['title'];
                 final fieldToUpdate =
                     fileData['type'] == 'link' ? 'title' : 'fileName';
-                fileDoc.reference
-                    .update({fieldToUpdate: renameController.text.trim()});
+
+                fileDoc.reference.update({fieldToUpdate: newName});
+                _logActivity('Renamed Item', {
+                  'oldName': oldName,
+                  'newName': newName,
+                  'type': fileData['type']
+                });
                 Navigator.pop(context);
               }
             },
@@ -844,6 +897,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       }
 
       await doc.reference.delete();
+
+      final itemName = data['fileName'] ?? data['title'] ?? data['url'];
+      _logActivity('Deleted Item', {'itemName': itemName, 'type': data['type']});
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -939,6 +995,13 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         newSharedWith.add('Faculty');
       }
       await doc.reference.update({'sharedWith': newSharedWith});
+
+      final itemName = (doc.data() as Map<String, dynamic>)['fileName'] ??
+          (doc.data() as Map<String, dynamic>)['title'] ??
+          'Unknown Item';
+      _logActivity(
+          'Edited Access', {'itemName': itemName, 'sharedWith': newSharedWith});
+
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Access updated successfully'),
         backgroundColor: Colors.green,
@@ -999,12 +1062,15 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       final batch = _firestore.batch();
       int deletedCount = 0;
       int permissionErrors = 0;
+      final List<String> deletedItemsNames = [];
 
       for (final docId in _selectedItemIds) {
         final doc = allDocs.firstWhere((d) => d.id == docId);
         final data = doc.data() as Map<String, dynamic>;
 
         if (data['ownerEmail'] == _auth.currentUser?.email) {
+          deletedItemsNames
+              .add(data['fileName'] ?? data['title'] ?? 'Unknown Item');
           if (data['type'] != 'link' && data['fileURL'] != null) {
             try {
               await _storage.refFromURL(data['fileURL']).delete();
@@ -1018,6 +1084,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         } else {
           permissionErrors++;
         }
+      }
+
+      if (deletedItemsNames.isNotEmpty) {
+        _logActivity('Deleted Multiple Items',
+            {'count': deletedItemsNames.length, 'items': deletedItemsNames});
       }
 
       await batch.commit();
@@ -1131,16 +1202,12 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemBuilder: (context, index) {
             var branch = branches[index].data() as Map<String, dynamic>;
             return ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-              leading: Icon(Icons.folder_copy_outlined,
-                  color: Colors.blue[800], size: 32),
+              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
               title: Text(
                 branch['name'] ?? 'No Name',
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               subtitle: Text(branch['fullname'] ?? 'No full name provided'),
-              trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 setState(() {
                   currentBranch = branch['name'];
@@ -1203,15 +1270,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemBuilder: (context, index) {
             var regulation = regulations[index].data() as Map<String, dynamic>;
             return ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-              leading: Icon(Icons.gavel_outlined,
-                  color: Colors.orange[800], size: 32),
+              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
               title: Text(
                 regulation['name'] ?? regulations[index].id,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 setState(() {
                   currentRegulation = regulations[index].id;
@@ -1275,15 +1338,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemBuilder: (context, index) {
             var year = years[index].data() as Map<String, dynamic>;
             return ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-              leading: Icon(Icons.school_outlined,
-                  color: Colors.purple[800], size: 32),
+              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
               title: Text(
                 year['name'] ?? years[index].id,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 setState(() {
                   currentYear = years[index].id;
@@ -1349,15 +1408,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             itemBuilder: (context, index) {
               var subject = subjects[index].data() as Map<String, dynamic>;
               return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-                leading: Icon(Icons.menu_book_outlined,
-                    color: Colors.green[800], size: 32),
+                leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
                 title: Text(
                   subject['name'] ?? subjects[index].id,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   setState(() {
                     currentSubject = subjects[index].id;
@@ -1436,29 +1491,13 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         }
 
         return ListView.builder(
-          padding: const EdgeInsets.all(8),
           itemCount: visibleItems.length,
           itemBuilder: (context, index) {
             final doc = visibleItems[index];
             final data = doc.data() as Map<String, dynamic>;
-            final isSelected = _selectedItemIds.contains(doc.id);
 
             if (data['type'] == 'link') {
-              return RegularLinkTile(
-                doc: doc,
-                isSelected: isSelected,
-                onTap: () {
-                  if (_isSelectionMode) {
-                    _toggleSelection(doc.id);
-                  } else {
-                    _openExternalUrl(data['url']);
-                  }
-                },
-                onLongPress: () => _toggleSelection(doc.id),
-                onDelete: _confirmDeleteFile,
-                onEditAccess: _showEditAccessDialog,
-                onOpenExternal: _openExternalUrl,
-              );
+              return _buildLinkTile(doc);
             } else {
               return _buildFileTile(doc);
             }
@@ -1505,17 +1544,17 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     final isSelected = _selectedItemIds.contains(doc.id);
 
     return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       leading: isSelected
           ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
           : Icon(_getFileIcon(fileData['type']),
-              color: Colors.blue[800], size: 40),
+              color: Colors.blue, size: 40),
       title: Text(
         fileData['fileName'] ?? 'Untitled File',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.bold),
       ),
-      subtitle: Text('$size - by $owner'),
+      subtitle: Text(size.isNotEmpty ? '$owner - $size' : owner),
       onTap: () {
         if (_isSelectionMode) {
           _toggleSelection(doc.id);
@@ -1548,6 +1587,53 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               itemBuilder: (context) => [
                 const PopupMenuItem(value: 'download', child: Text('Download')),
                 const PopupMenuItem(value: 'share', child: Text('Share')),
+                const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                const PopupMenuItem(
+                    value: 'edit_access', child: Text('Edit Access')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            )
+          : null,
+    );
+  }
+
+  Widget _buildLinkTile(DocumentSnapshot doc) {
+    final linkData = doc.data() as Map<String, dynamic>;
+    final url = linkData['url'];
+    final owner = linkData['ownerName'] ?? 'Unknown';
+    final isSelected = _selectedItemIds.contains(doc.id);
+
+    return ListTile(
+      tileColor: isSelected ? Colors.blue.withOpacity(0.2) : null,
+      leading: isSelected
+          ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
+          : const Icon(Icons.link, color: Colors.blue, size: 40),
+      title: Text(
+        linkData['title'] ?? 'Web Link',
+        style: const TextStyle(fontWeight: FontWeight.bold),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(owner),
+      onTap: () {
+        if (_isSelectionMode) {
+          _toggleSelection(doc.id);
+        } else {
+          _openExternalUrl(url);
+        }
+      },
+      onLongPress: () => _toggleSelection(doc.id),
+      trailing: !_isSelectionMode
+          ? PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'open_external') _openExternalUrl(url);
+                if (value == 'rename') _showRenameDialog(doc);
+                if (value == 'delete') _confirmDeleteFile(doc);
+                if (value == 'edit_access') _showEditAccessDialog(doc);
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                    value: 'open_external', child: Text('Open in Browser')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 const PopupMenuItem(
                     value: 'edit_access', child: Text('Edit Access')),
@@ -1732,61 +1818,3 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   }
 }
 
-// Dedicated StatelessWidget for regular web links
-class RegularLinkTile extends StatelessWidget {
-  final DocumentSnapshot doc;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-  final Function(DocumentSnapshot) onDelete;
-  final Function(DocumentSnapshot) onEditAccess;
-  final Function(String?) onOpenExternal;
-
-  const RegularLinkTile({
-    super.key,
-    required this.doc,
-    required this.isSelected,
-    required this.onTap,
-    required this.onLongPress,
-    required this.onDelete,
-    required this.onEditAccess,
-    required this.onOpenExternal,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final linkData = doc.data() as Map<String, dynamic>;
-    final url = linkData['url'];
-
-    return Card(
-      color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: ListTile(
-        leading: isSelected
-            ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
-            : Icon(Icons.link, color: Colors.green[800], size: 40),
-        title: Text(linkData['title'] ?? 'Web Link'),
-        subtitle: Text(url ?? '', overflow: TextOverflow.ellipsis),
-        onTap: onTap,
-        onLongPress: onLongPress,
-        trailing: !isSelected
-            ? PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'open_external') onOpenExternal(url);
-                  if (value == 'delete') onDelete(doc);
-                  if (value == 'edit_access') onEditAccess(doc);
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                      value: 'open_external',
-                      child: Text('Open in Browser')),
-                  const PopupMenuItem(
-                      value: 'edit_access', child: Text('Edit Access')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                ],
-              )
-            : null,
-      ),
-    );
-  }
-}

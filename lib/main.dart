@@ -3,9 +3,12 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:path_provider/path_provider.dart'; // [ADDED]
-import 'package:hive_flutter/hive_flutter.dart';    // [ADDED]
-
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 import 'package:grademate/firebase_options.dart';
 import 'package:grademate/providers/auth_provider.dart' as AppAuthProvider;
 import 'package:grademate/pages/Authentication/login_page.dart';
@@ -22,6 +25,13 @@ import 'package:grademate/pages/Faculty/faculty_my_files_page.dart';
 import 'package:grademate/widgets/file_details_page.dart';
 import 'package:grademate/widgets/file_viewer_page.dart';
 import 'package:grademate/models/file_models.dart';
+import 'package:grademate/widgets/downloads_page.dart';
+import 'package:grademate/widgets/all_activities_page.dart';
+import 'package:grademate/widgets/my_notes_page.dart';
+import 'package:grademate/widgets/reminders_page.dart';
+import 'package:grademate/pages/Faculty/faculty_assignments_page.dart';
+import 'package:grademate/pages/Faculty/send_notification_page.dart';
+import 'package:grademate/pages/Faculty/manage_students_page.dart';
 
 final _router = GoRouter(
   initialLocation: '/login',
@@ -102,14 +112,42 @@ final _router = GoRouter(
       path: '/file_viewer',
       builder: (context, state) => FileViewerPage(file: state.extra as FileData),
     ),
+    GoRoute(
+      path: '/downloads',
+      builder: (context, state) => const DownloadsPage(),
+    ),
+    GoRoute(
+      path: '/all_activities',
+      builder: (context, state) => const AllActivitiesPage(),
+    ),
+    GoRoute(
+      path: '/my_notes',
+      builder: (context, state) => const MyNotesPage(),
+    ),
+    GoRoute(
+      path: '/reminders',
+      builder: (context, state) => const RemindersPage(),
+    ),
+    GoRoute(
+      path: '/faculty_assignments',
+      builder: (context, state) => const FacultyAssignmentsPage(),
+    ),
+    GoRoute(
+      path: '/send_notification',
+      builder: (context, state) => const SendNotificationPage(),
+    ),
+    GoRoute(
+      path: '/manage_students',
+      builder: (context, state) => const ManageStudentsPage(),
+    ),
   ],
   redirect: (context, state) {
     final user = FirebaseAuth.instance.currentUser;
     final isAuthenticated = user != null;
-    final isVerified = isAuthenticated ? user.emailVerified : false; 
-    
+    final isVerified = isAuthenticated ? user.emailVerified : false;
+
     // Check if Hive box is open, get role
-    final userBox = Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null; 
+    final userBox = Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null;
     final role = userBox?.get('role');
 
     final isAuthPage = [
@@ -133,13 +171,13 @@ final _router = GoRouter(
       } else if (role == 'Faculty') {
         return '/faculty_home';
       }
-      
+
       // Fallback if local role is missing despite Firebase login, force relogin
       if (role == null) {
-          // Firebase sign out removes the Firebase user object, forcing redirect back to /login on next check
-          FirebaseAuth.instance.signOut(); 
-          if (userBox != null) userBox.clear();
-          return '/login';
+        // Firebase sign out removes the Firebase user object, forcing redirect back to /login on next check
+        FirebaseAuth.instance.signOut();
+        if (userBox != null) userBox.clear();
+        return '/login';
       }
     }
 
@@ -150,19 +188,40 @@ final _router = GoRouter(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+  await _requestPermissions();
+
+  tz.initializeTimeZones();
+  tz.setLocalLocation(tz.getLocation('Asia/Kolkata')); // Set for India Standard Time
+
   // [START HIVE INITIALIZATION]
   final appDocumentDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDocumentDir.path);
   // Opens the box for string data storage
-  await Hive.openBox<String>('userBox'); 
+  await Hive.openBox<String>('userBox');
   // [END HIVE INITIALIZATION]
-  
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Enable Firestore offline persistence
+  FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
+
   runApp(const MyApp());
 }
+
+Future<void> _requestPermissions() async {
+  // Request multiple permissions at once.
+  Map<Permission, PermissionStatus> statuses = await [
+    Permission.storage,
+    Permission.notification,
+  ].request();
+
+  // You can check the status of each permission if needed
+  print("Storage Permission: ${statuses[Permission.storage]}");
+  print("Notification Permission: ${statuses[Permission.notification]}");
+}
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -184,3 +243,4 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+

@@ -35,6 +35,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   
   String? _currentFolderId;
   String? _currentFolderName;
+  String? userName;
 
   List<FolderData> _directoryFolders = [];
   List<FileData> _directoryFiles = [];
@@ -49,12 +50,14 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
   final TextEditingController _searchController = TextEditingController();
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     _currentFolderId = widget.folderId;
     _currentFolderName = widget.folderName ?? 'My Files';
+    _loadUserData();
     _loadInitialData();
     _initializeNotifications();
     _searchController.addListener(_onSearchChanged);
@@ -62,14 +65,67 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
+  
+  Future<void> _loadUserData() async {
+    final user = _auth.currentUser;
+    if (user != null && user.email != null) {
+      try {
+        final userDoc = await _firestore.collection('users').doc(user.email).get();
+        if (mounted && userDoc.exists) {
+          setState(() {
+            userName = userDoc.data()?['name'];
+          });
+        }
+      } catch (e) {
+        print("Error loading user data: $e");
+      }
+    }
+  }
+
+  // --- Activity Logging ---
+  Future<void> _logActivity(String action, Map<String, dynamic> details) async {
+    if (_auth.currentUser == null || _auth.currentUser!.email == null) return;
+
+    final userEmail = _auth.currentUser!.email!;
+    final activityData = {
+      'userEmail': userEmail,
+      'userName': userName ?? 'Unknown',
+      'action': action,
+      'timestamp': FieldValue.serverTimestamp(),
+      'details': details,
+    };
+
+    try {
+      // Log to the main activities collection
+      await _firestore.collection('activities').add(activityData);
+
+      // Log to the user-specific activities subcollection
+      await _firestore
+          .collection('users')
+          .doc(userEmail)
+          .collection('activities')
+          .add(activityData);
+    } catch (e) {
+      print("Error logging activity: $e");
+    }
+  }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text;
+    // Cancel previous timer
+    _debounceTimer?.cancel();
+    
+    // Start new timer - only search after user stops typing for 300ms
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchController.text;
+        });
+      }
     });
   }
   
@@ -189,8 +245,8 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   }
 
   Future<void> _loadInitialData() async {
+    await _cacheAllUserData();
     await _loadDirectoryContents();
-    _cacheAllUserData();
   }
 
   Future<void> _loadDirectoryContents() async {
@@ -254,20 +310,14 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     }
   }
   
-  // In faculty_my_files_page.dart
-
   void _onItemTapped(int index) {
     if (index == 0) {
-      // Corrected: Navigates to faculty home
       context.go('/faculty_home');
     } else if (index == 1) {
-      // Corrected: Navigates to faculty courses
       context.go('/faculty_courses');
     } else if (index == 2) {
-      // Stays on this page (My Files)
       context.go('/faculty_my_files');
     } else if (index == 3) {
-      // Navigates to faculty profile
       context.go('/faculty_profile');
     }
   }
@@ -339,6 +389,8 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       );
 
       await newFileRef.set(newFileData.toMap());
+      await _logActivity('Uploaded My File', {'fileName': fileName, 'parentFolder': _currentFolderName});
+
 
       if (_currentFolderId != null && _currentFolderId!.isNotEmpty) {
         final foldersCollection = _firestore.collection('users').doc(user.email).collection('folders');
@@ -392,6 +444,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       );
 
       await newFolderRef.set(newFolderData.toMap());
+      await _logActivity('Created My Folder', {'folderName': folderName, 'parentFolder': _currentFolderName});
 
       if (_currentFolderId != null && _currentFolderId!.isNotEmpty) {
         final parentFolderRef = userFoldersCollection.doc(_currentFolderId);
@@ -439,6 +492,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
       final filesCollection = await _getCurrentCollectionRef('files');
       await filesCollection.doc(file.id).delete();
+      await _logActivity('Deleted My File', {'fileName': file.name, 'parentFolder': _currentFolderName});
 
       setState(() {
         _directoryFiles.removeWhere((f) => f.id == file.id);
@@ -513,6 +567,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       }
 
       await deleteRecursively(folder.id);
+      await _logActivity('Deleted My Folder', {'folderName': folder.name});
       await _loadInitialData();
       _showSnackbar('Folder "${folder.name}" and all its contents deleted successfully!');
     } catch (e) {
@@ -529,6 +584,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
       final targetCollection = await _getCurrentCollectionRef(type == 'File' ? 'files' : 'folders');
       await targetCollection.doc(itemId).update({'name': newName});
+      await _logActivity('Renamed My Item', {'type': type, 'oldName': oldName, 'newName': newName});
       
       setState(() {
         if (type == 'File') {
@@ -601,12 +657,18 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   String _getItemPath(dynamic item) {
     if (_searchQuery.isNotEmpty) {
-      return '.../Search Result';
+      // Find the parent folder for search results to display a more useful path
+      final parentFolderId = item.parentFolderId;
+      if (parentFolderId == null) {
+        return 'My Files';
+      }
+      final parentFolder = _allUserFolders.where((f) => f.id == parentFolderId).firstOrNull;
+      return parentFolder?.name ?? 'My Files';
     }
     if (_currentFolderId == null) {
       return 'My Files';
     } else {
-      return '.../${_currentFolderName}';
+      return _currentFolderName ?? 'Unknown';
     }
   }
   
@@ -615,13 +677,16 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     List<dynamic> itemsToDisplay;
 
     if (lowerCaseQuery.isNotEmpty) {
+      // Search from all user data (cached)
       final filteredFolders = _allUserFolders.where((folder) => folder.name.toLowerCase().contains(lowerCaseQuery));
       final filteredFiles = _allUserFiles.where((file) => file.name.toLowerCase().contains(lowerCaseQuery));
       itemsToDisplay = [...filteredFolders, ...filteredFiles];
     } else {
+      // Show current directory contents
       itemsToDisplay = [..._directoryFolders, ..._directoryFiles];
     }
 
+    // Apply tab filter
     if (_searchTab != 'All') {
       itemsToDisplay = itemsToDisplay.where((item) {
         if (_searchTab == 'Files') return item is FileData;
@@ -630,6 +695,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       }).toList();
     }
     
+    // Sort: folders first, then alphabetically
     itemsToDisplay.sort((a, b) {
       if (a is FolderData && b is FileData) return -1;
       if (a is FileData && b is FolderData) return 1;
@@ -654,6 +720,20 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     if (timestamp == null) return 'N/A';
     return DateFormat('MMM dd, yyyy').format(timestamp.toDate());
   }
+  
+  Widget _buildAddItem(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 40, color: Colors.blue[800]),
+          const SizedBox(height: 8),
+          Text(label),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -669,123 +749,141 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
                 onPressed: _goBack,
               )
             : null,
-        title: Text(_currentFolderName ?? 'My Files', style: const TextStyle(color: Colors.black)),
+        title: Text(
+          _currentFolderName ?? 'My Files',
+          style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
         centerTitle: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.add_circle_outline, color: Colors.black),
             onPressed: () {
-              showModalBottomSheet(
+              showDialog(
                 context: context,
-                builder: (context) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.create_new_folder),
-                      title: const Text('Create New Folder'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _showCreateFolderDialog();
-                      },
+                builder: (context) => AlertDialog(
+                  title: const Text("Add Content"),
+                  content: SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.8,
+                    height: MediaQuery.of(context).size.height * 0.15,
+                    child: GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      children: [
+                        _buildAddItem(Icons.create_new_folder_outlined, 'New Folder', () {
+                          Navigator.pop(context);
+                          _showCreateFolderDialog();
+                        }),
+                        _buildAddItem(Icons.upload_file, 'Upload File', () {
+                          Navigator.pop(context);
+                          _uploadFile();
+                        }),
+                      ],
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.upload_file),
-                      title: const Text('Upload File'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _uploadFile();
-                      },
-                    ),
-                  ],
+                  ),
                 ),
               );
             },
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: const InputDecoration(
-                        icon: Icon(Icons.search, color: Colors.grey),
-                        hintText: 'Search all files and folders',
-                        border: InputBorder.none,
-                      ),
-                    ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Column(
+            children: [
+              // Search Bar - Always visible
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: const InputDecoration(
+                    icon: Icon(Icons.search, color: Colors.grey),
+                    hintText: 'Search all files and folders',
+                    border: InputBorder.none,
                   ),
-                  const SizedBox(height: 16),
-                  
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: ['All', 'Files', 'Folders'].map((tab) {
-                      final isSelected = _searchTab == tab;
-                      return GestureDetector(
-                        onTap: () => setState(() => _searchTab = tab),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color: isSelected ? Colors.blue : Colors.transparent,
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                          child: Text(
-                            tab,
-                            style: TextStyle(
-                              color: isSelected ? Colors.blue : Colors.grey,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 24),
-
-                  if (filteredItems.isEmpty)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Text(
-                          _searchQuery.isEmpty ? 'No files or folders here. Tap the + button to create one.' : 'No results found for "$_searchQuery"',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey[500]),
-                        ),
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: filteredItems.length,
-                      itemBuilder: (context, index) {
-                        final item = filteredItems[index];
-                        if (item is FileData) {
-                          return _buildFileTile(item, _getItemPath(item));
-                        } else if (item is FolderData) {
-                          return _buildFolderTile(item, _getItemPath(item));
-                        }
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                ],
+                ),
               ),
-            ),
+              const SizedBox(height: 16),
+              // Tab Selector - Always visible
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: ['All', 'Files', 'Folders'].map((tab) {
+                  final isSelected = _searchTab == tab;
+                  return GestureDetector(
+                    onTap: () => setState(() => _searchTab = tab),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: isSelected ? Colors.blue : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        tab,
+                        style: TextStyle(
+                          color: isSelected ? Colors.blue : Colors.grey,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              
+              // Content Area
+              _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : filteredItems.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  _searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open,
+                                  size: 64,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _searchQuery.isEmpty
+                                      ? 'No files or folders here.\nTap the + button to create one.'
+                                      : 'No results found for "$_searchQuery"',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          itemCount: filteredItems.length,
+                          itemBuilder: (context, index) {
+                            final item = filteredItems[index];
+                            if (item is FileData) {
+                              return _buildFileTile(item, _getItemPath(item));
+                            } else if (item is FolderData) {
+                              return _buildFolderTile(item, _getItemPath(item));
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
+            ],
+          ),
+        ),
+      ),
       bottomNavigationBar: BottomNavBar(
         selectedIndex: _selectedIndex,
         onItemTapped: _onItemTapped,
@@ -795,9 +893,15 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   Widget _buildFolderTile(FolderData folder, String path) {
     return ListTile(
-      leading: Icon(Icons.folder_outlined, color: Colors.blue[800]),
-      title: Text(folder.name),
-      subtitle: Text(path, style: const TextStyle(color: Colors.grey)),
+      leading: Icon(Icons.folder_outlined, color: Colors.blue[800], size: 40),
+      title: Text(
+        folder.name,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        path,
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
       trailing: _buildItemPopupMenu('Folder', folder),
       onTap: () => _openFolder(folder.id, folder.name),
     );
@@ -805,9 +909,15 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   Widget _buildFileTile(FileData file, String path) {
     return ListTile(
-      leading: Icon(_getFileIcon(file.type), color: Colors.blue[800]),
-      title: Text(file.name),
-      subtitle: Text('${path} - ${_formatBytes(file.size)}', style: const TextStyle(color: Colors.grey)),
+      leading: Icon(_getFileIcon(file.type), color: Colors.blue[800], size: 40),
+      title: Text(
+        file.name,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        '${_formatBytes(file.size)}',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
       trailing: _buildItemPopupMenu('File', file),
       onTap: () {
         context.push('/file_viewer', extra: file);
@@ -843,7 +953,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
                       _deleteFolder(folderData!);
                     }
                   },
-                  child: const Text('Delete'),
+                  child: const Text('Delete', style: TextStyle(color: Colors.red)),
                 ),
               ],
             ),
@@ -921,14 +1031,14 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
           const PopupMenuItem<String>(
             value: 'delete',
             child: ListTile(
-              leading: Icon(Icons.delete_outline),
-              title: Text('Delete'),
+              leading: Icon(Icons.delete_outline, color: Colors.red),
+              title: Text('Delete', style: TextStyle(color: Colors.red)),
             ),
           ),
         ];
 
         if (type == 'File') {
-          items.addAll([
+          items.insertAll(1, [
             const PopupMenuItem<String>(
               value: 'download',
               child: ListTile(
@@ -1025,3 +1135,4 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     }
   }
 }
+
