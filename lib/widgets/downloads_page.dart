@@ -124,7 +124,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   }
 
   String _getCategoryForExtension(String extension) {
-    const docExtensions = ['.pdf', '.doc', '.docx', '.txt'];
+    const docExtensions = ['.pdf', '.doc', '.docx', '.txt', '.ppt', '.pptx', '.xls', '.xlsx'];
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif'];
     const videoExtensions = ['.mp4', '.mov', '.avi'];
 
@@ -147,12 +147,52 @@ class _DownloadsPageState extends State<DownloadsPage> {
     }
   }
 
+  // *** FIX: Updated _openFile function to include MIME type ***
   Future<void> _openFile(File file) async {
-    final result = await OpenFilex.open(file.path);
+    final mimeType = _getMimeTypeForFile(file.path);
+    final result = await OpenFilex.open(file.path, type: mimeType);
+
     if (result.type != ResultType.done) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open file: ${result.message}')),
+        SnackBar(
+          content: Text('Could not open file: ${result.message}'),
+          backgroundColor: Colors.red,
+        ),
       );
+    }
+  }
+
+  // *** NEW: Helper function to get MIME type from file extension ***
+  String? _getMimeTypeForFile(String path) {
+    final extension = p.extension(path).toLowerCase();
+    switch (extension) {
+      case '.pdf':
+        return 'application/pdf';
+      case '.doc':
+        return 'application/msword';
+      case '.docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case '.xls':
+        return 'application/vnd.ms-excel';
+      case '.xlsx':
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      case '.ppt':
+        return 'application/vnd.ms-powerpoint';
+      case '.pptx':
+        return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.png':
+        return 'image/png';
+      case '.gif':
+        return 'image/gif';
+      case '.mp4':
+        return 'video/mp4';
+      case '.txt':
+        return 'text/plain';
+      default:
+        return null; // Let the OS try to figure it out
     }
   }
 
@@ -215,9 +255,11 @@ class _DownloadsPageState extends State<DownloadsPage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false, // prevent system from auto-closing page
+      canPop: !_isSelectionMode,
       onPopInvoked: (didPop) {
-        _navigateBack(); // custom navigation logic
+        if (!didPop) {
+           _navigateBack();
+        }
       },
       child: Scaffold(
         appBar: _isSelectionMode ? _buildSelectionAppBar() : _buildDefaultAppBar(),
@@ -253,7 +295,9 @@ class _DownloadsPageState extends State<DownloadsPage> {
                               Icon(Icons.download_done, size: 80, color: Colors.grey[400]),
                               const SizedBox(height: 16),
                               Text(
-                                'No downloads yet.',
+                                _searchController.text.isEmpty
+                                ? 'No downloads yet.'
+                                : 'No files found.',
                                 style: TextStyle(color: Colors.grey[600], fontSize: 16),
                               ),
                             ],
@@ -286,6 +330,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
       backgroundColor: Colors.white,
       foregroundColor: Colors.black,
       elevation: 1,
+      centerTitle: true,
     );
   }
 
