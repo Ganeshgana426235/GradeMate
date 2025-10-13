@@ -30,9 +30,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
         .doc(user.email)
         .collection('notifications');
 
-    // Get all unread notifications
-    final unreadSnapshot =
-        await notificationsRef.where('isRead', isEqualTo: false).get();
+    // Get all unread notifications that have passed their timestamp
+    final unreadSnapshot = await notificationsRef
+        .where('isRead', isEqualTo: false)
+        .where('timestamp', isLessThanOrEqualTo: Timestamp.now())
+        .get();
 
     if (unreadSnapshot.docs.isEmpty) {
       return; // No notifications to mark as read
@@ -52,6 +54,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 
+  /// Fetches notifications whose timestamp is in the past or present.
+  /// Future-dated notifications will not be included in this stream.
   Stream<QuerySnapshot> _getNotificationsStream() {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
@@ -61,6 +65,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
         .collection('users')
         .doc(user.email)
         .collection('notifications')
+        // **CHANGE**: Only fetch notifications that are due
+        .where('timestamp', isLessThanOrEqualTo: Timestamp.now())
         .orderBy('timestamp', descending: true)
         .snapshots();
   }
@@ -131,7 +137,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
       color: isRead ? Colors.transparent : Colors.blue.withOpacity(0.05),
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        // **CHANGE**: Align items to the center vertically
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           CircleAvatar(
             radius: 24,
@@ -154,7 +161,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
           ),
           if (timestamp != null)
             Padding(
-              padding: const EdgeInsets.only(left: 8.0, top: 2.0),
+              padding: const EdgeInsets.only(left: 8.0),
               child: Text(
                 _formatTimestamp(timestamp),
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
@@ -178,7 +185,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final String type = data['type'] ?? '';
     final String title = data['title'] ?? 'No Title';
     final Timestamp? timestamp = data['timestamp'];
-    
+
     final boldStyle = const TextStyle(fontWeight: FontWeight.bold);
     final regularStyle = TextStyle(color: Colors.grey.shade700);
 

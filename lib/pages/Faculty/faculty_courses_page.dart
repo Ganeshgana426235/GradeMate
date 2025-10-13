@@ -407,43 +407,44 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Add Year to "$currentRegulation"'),
-        content: Text(
-          'This will add the new year to the "$currentRegulation" regulation for ALL branches.',
-          style: TextStyle(color: Colors.grey[600]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'This will add the new year to the "$currentRegulation" regulation for ALL branches.',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: yearController,
+              decoration: const InputDecoration(
+                labelText: 'Year Name (e.g., 1st Year)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
-          TextField(
-            controller: yearController,
-            decoration: const InputDecoration(
-              labelText: 'Year Name (e.g., 1st Year)',
-              border: OutlineInputBorder(),
-            ),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (yearController.text.isNotEmpty) {
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+                await _addYearToAllBranches(
+                    yearController.text.trim().toUpperCase());
+                Navigator.pop(context); // Pop loading indicator
+                Navigator.pop(context); // Pop add dialog
+              }
+            },
+            child: const Text('Add to All'),
           ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel')),
-              ElevatedButton(
-                onPressed: () async {
-                  if (yearController.text.isNotEmpty) {
-                    showDialog(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (context) =>
-                          const Center(child: CircularProgressIndicator()),
-                    );
-                    await _addYearToAllBranches(yearController.text.trim());
-                    Navigator.pop(context);
-                    Navigator.pop(context);
-                  }
-                },
-                child: const Text('Add to All'),
-              ),
-            ],
-          )
         ],
       ),
     );
@@ -1793,3 +1794,4 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     );
   }
 }
+
