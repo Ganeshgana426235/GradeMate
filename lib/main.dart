@@ -35,6 +35,8 @@ import 'package:grademate/pages/Faculty/faculty_assignments_page.dart';
 import 'package:grademate/pages/Faculty/send_notification_page.dart';
 import 'package:grademate/pages/Faculty/manage_students_page.dart';
 import 'package:grademate/widgets/notifications_page.dart';
+import 'package:grademate/widgets/favorites_page.dart';
+
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -185,6 +187,10 @@ final _router = GoRouter(
     GoRoute(
       path: '/reminders',
       builder: (context, state) => const RemindersPage(),
+    ),
+    GoRoute(
+      path: '/favorites',
+      builder: (context, state) => const FavoritesPage(),
     ),
     GoRoute(
       path: '/faculty_assignments',

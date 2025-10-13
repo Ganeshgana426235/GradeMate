@@ -91,9 +91,11 @@ class _DownloadsPageState extends State<DownloadsPage> {
       if (await gradeMateDir.exists()) {
         final files = gradeMateDir.listSync().whereType<File>().toList();
         files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-        setState(() {
-          _downloadedFiles = files;
-        });
+        if (mounted) {
+          setState(() {
+            _downloadedFiles = files;
+          });
+        }
       }
     } catch (e) {
       print("Error loading downloaded files: $e");
@@ -141,18 +143,19 @@ class _DownloadsPageState extends State<DownloadsPage> {
         await Share.shareXFiles(xFiles, text: 'Shared from GradeMate');
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to share files: $e'), backgroundColor: Colors.red),
       );
     }
   }
 
-  // *** FIX: Updated _openFile function to include MIME type ***
   Future<void> _openFile(File file) async {
     final mimeType = _getMimeTypeForFile(file.path);
     final result = await OpenFilex.open(file.path, type: mimeType);
 
     if (result.type != ResultType.done) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Could not open file: ${result.message}'),
@@ -162,7 +165,6 @@ class _DownloadsPageState extends State<DownloadsPage> {
     }
   }
 
-  // *** NEW: Helper function to get MIME type from file extension ***
   String? _getMimeTypeForFile(String path) {
     final extension = p.extension(path).toLowerCase();
     switch (extension) {
@@ -192,7 +194,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
       case '.txt':
         return 'text/plain';
       default:
-        return null; // Let the OS try to figure it out
+        return null;
     }
   }
 
@@ -221,12 +223,14 @@ class _DownloadsPageState extends State<DownloadsPage> {
         for (var file in files) {
           await file.delete();
         }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${files.length} file(s) deleted successfully'), backgroundColor: Colors.green),
         );
         _exitSelectionMode();
         _loadDownloadedFiles();
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to delete files: $e'), backgroundColor: Colors.red),
         );
@@ -258,7 +262,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
       canPop: !_isSelectionMode,
       onPopInvoked: (didPop) {
         if (!didPop) {
-           _navigateBack();
+          _navigateBack();
         }
       },
       child: Scaffold(
@@ -410,7 +414,11 @@ class _DownloadsPageState extends State<DownloadsPage> {
         },
         leading: isSelected
             ? Icon(Icons.check_circle, color: Colors.blue[800], size: 40)
-            : Icon(_getFileIcon(fileExtension), color: Colors.blue[800], size: 40),
+            : Icon(
+                _getFileIcon(fileExtension),
+                color: _getColorForFileType(fileExtension),
+                size: 40,
+              ),
         title: Text(fileName, style: const TextStyle(fontWeight: FontWeight.w500)),
         subtitle: Text(_formatBytes(fileSize)),
         trailing: _isSelectionMode
@@ -444,33 +452,64 @@ class _DownloadsPageState extends State<DownloadsPage> {
     );
   }
 
+  // **CHANGE**: Icons are now the "filled" version
   IconData _getFileIcon(String? extension) {
     switch (extension?.toLowerCase()) {
       case 'pdf':
-        return Icons.picture_as_pdf_outlined;
+        return Icons.picture_as_pdf;
       case 'doc':
       case 'docx':
-        return Icons.description_outlined;
+        return Icons.description;
       case 'ppt':
       case 'pptx':
-        return Icons.slideshow_outlined;
+        return Icons.slideshow;
       case 'xls':
       case 'xlsx':
-        return Icons.table_chart_outlined;
+        return Icons.table_chart;
       case 'jpg':
       case 'jpeg':
       case 'png':
       case 'gif':
-        return Icons.image_outlined;
+        return Icons.image;
       case 'mp4':
       case 'mov':
       case 'avi':
-        return Icons.video_file_outlined;
+        return Icons.video_file;
       case 'zip':
       case 'rar':
-        return Icons.folder_zip_outlined;
+        return Icons.folder_zip;
       default:
-        return Icons.insert_drive_file_outlined;
+        return Icons.insert_drive_file;
+    }
+  }
+
+  Color _getColorForFileType(String? fileType) {
+    switch (fileType?.toLowerCase()) {
+      case 'pdf':
+        return Colors.red.shade700;
+      case 'doc':
+      case 'docx':
+        return Colors.blue.shade800;
+      case 'ppt':
+      case 'pptx':
+        return Colors.orange.shade700;
+      case 'xls':
+      case 'xlsx':
+        return Colors.green.shade700;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+        return Colors.purple.shade600;
+      case 'mp4':
+      case 'mov':
+      case 'avi':
+        return Colors.teal.shade600;
+      case 'zip':
+      case 'rar':
+        return Colors.brown.shade600;
+      default:
+        return Colors.grey.shade700;
     }
   }
 

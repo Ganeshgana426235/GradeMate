@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // **NEW IMPORT**
 
 class StudentCoursesPage extends StatefulWidget {
   const StudentCoursesPage({super.key});
@@ -55,8 +56,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       try {
         final userDoc =
             await _firestore.collection('users').doc(user.email).get();
-        if (!mounted) return;
-        if (userDoc.exists) {
+        if (mounted && userDoc.exists) {
           final data = userDoc.data();
           setState(() {
             _collegeId = data?['collegeId'];
@@ -244,7 +244,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                         setState(() {
                           _expandedYearId = yearDocs.first.id;
                           if (_breadcrumbs.length == 1) {
-                            _breadcrumbs = ['Courses', yearDocs.first.id];
+                             _breadcrumbs = ['Courses', yearDocs.first.id];
                           }
                           _isFirstLoad = false;
                         });
@@ -277,10 +277,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
           color: isManuallyExpanded ? primaryColor.withOpacity(0.05) : Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(15.0),
-            side: BorderSide(
-                color: isManuallyExpanded
-                    ? primaryColor.withOpacity(0.3)
-                    : Colors.grey.shade200),
+            side: BorderSide(color: isManuallyExpanded ? primaryColor.withOpacity(0.3) : Colors.grey.shade200),
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(15.0),
@@ -292,8 +289,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                     if (_currentSubjectId == null) _breadcrumbs = ['Courses'];
                   } else {
                     _expandedYearId = yearId;
-                    if (_currentSubjectId == null)
-                      _breadcrumbs = ['Courses', yearId];
+                    if (_currentSubjectId == null) _breadcrumbs = ['Courses', yearId];
                   }
                 }
               });
@@ -418,8 +414,9 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       margin: const EdgeInsets.only(top: 8.0),
       elevation: 0,
       shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: Colors.grey.shade200)),
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200)
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => _navigateToSubject(yearName, subjectDoc.id, subjectName),
@@ -596,6 +593,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
 
   // --- Helper and Utility Functions ---
 
+  // **NEW**: Checks for internet connection
+  Future<bool> _isConnected() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    return connectivityResult != ConnectivityResult.none;
+  }
+
   Future<void> _addToFavorites(DocumentSnapshot doc) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
@@ -643,7 +646,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         .collection('years')
         .snapshots();
   }
-
+  
   CollectionReference _getFilesCollectionRef() {
     return _firestore
         .collection('colleges')
@@ -658,7 +661,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         .doc(_currentSubjectId)
         .collection('files');
   }
-
+  
   Color _getColorForFileType(String? fileType) {
     switch (fileType?.toLowerCase()) {
       case 'pdf': return Colors.red.shade700;
@@ -672,7 +675,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       default: return Colors.grey.shade700;
     }
   }
-
+  
   IconData _getFileIcon(String? fileType) {
     switch (fileType?.toLowerCase()) {
       case 'pdf': return Icons.picture_as_pdf;
@@ -685,14 +688,14 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       default: return Icons.insert_drive_file;
     }
   }
-
+  
   String _formatBytes(int bytes, [int decimals = 2]) {
     if (bytes <= 0) return "0 B";
     const suffixes = ["B", "KB", "MB", "GB", "TB"];
     var i = (log(bytes) / log(1024)).floor();
     return '${(bytes / pow(1024, i)).toStringAsFixed(decimals)} ${suffixes[i]}';
   }
-
+  
   Future<void> _openExternalUrl(String? url) async {
     if (url == null) return;
     final uri = Uri.parse(url);
@@ -700,18 +703,26 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
-
+  
   Future<void> _downloadFile(DocumentSnapshot doc) async {
-    final dio = Dio();
+    if (!await _isConnected()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No internet connection. Please check your network.'),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
+    }
+
     try {
       final data = doc.data() as Map<String, dynamic>;
       final fileName = data['fileName'];
       final url = data['fileURL'];
 
+      final dio = Dio();
       final Directory? downloadsDir = await getExternalStorageDirectory();
-      if (downloadsDir == null) {
-        throw Exception('Could not get download directory.');
-      }
+      if (downloadsDir == null) throw Exception('Could not get download directory.');
 
       final gradeMateDir = Directory('${downloadsDir.path}/GradeMate');
       if (!await gradeMateDir.exists()) {
@@ -744,13 +755,23 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Error downloading file: $e'),
-            backgroundColor: Colors.red),
+            content: Text('Error downloading file: Please check your internet connection or Allow Storage Permissions.'),
+            backgroundColor: const Color.fromARGB(255, 241, 114, 105)),
       );
     }
   }
-
+  
   Future<void> _shareFile(DocumentSnapshot doc) async {
+    if (!await _isConnected()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No internet connection. Please check your network.'),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
+    }
+    
     try {
       final data = doc.data() as Map<String, dynamic>;
       final fileName = data['fileName'];
@@ -773,12 +794,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Failed to share file: $e'),
+            content: Text('Failed to share file: Please check your internet connection'),
             backgroundColor: Colors.red),
       );
     }
   }
-
+  
   void _initializeNotifications() {
     flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
     const AndroidInitializationSettings androidSettings =
@@ -787,7 +808,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         InitializationSettings(android: androidSettings);
     flutterLocalNotificationsPlugin.initialize(initSettings);
   }
-
+  
   Future<void> _showProgressNotification(String title, String fileName,
       int progress, int notificationId) async {
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
@@ -812,7 +833,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       platformDetails,
     );
   }
-
+  
   Future<void> _showCompletionNotification(
       String title, String fileName, int notificationId) async {
     await flutterLocalNotificationsPlugin.cancel(notificationId);
