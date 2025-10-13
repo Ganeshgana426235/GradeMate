@@ -1,18 +1,20 @@
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:intl/intl.dart';
-import 'package:grademate/models/file_models.dart';
-import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:go_router/go_router.dart';
+import 'package:grademate/models/file_models.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+// The class name is kept as MyFilesPage as in the original student file
 class MyFilesPage extends StatefulWidget {
   final String? folderId;
   final String? folderName;
@@ -29,23 +31,75 @@ class _MyFilesPageState extends State<MyFilesPage> {
 
   String? _currentFolderId;
   String? _currentFolderName;
+  String? userName;
 
-  List<FolderData> _allFolders = [];
-  List<FileData> _allFiles = [];
+  // Master lists containing all user items. Display logic will filter these.
+  List<FolderData> _allUserFolders = [];
+  List<FileData> _allUserFiles = [];
+
   bool _isLoading = true;
+
+  // State for multi-selection
+  bool _isSelectionMode = false;
+  final Set<String> _selectedItems = {};
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _debounceTimer;
+
   @override
   void initState() {
     super.initState();
     _currentFolderId = widget.folderId;
     _currentFolderName = widget.folderName ?? 'My Files';
-    _fetchAndCacheAllData();
     _initializeNotifications();
+    _searchController.addListener(_onSearchChanged);
+    _loadInitialData();
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitialData() async {
+    await _loadUserData();
+    await _loadAllItems();
+  }
+
+  Future<void> _loadUserData() async {
+    final user = _auth.currentUser;
+    if (user != null && user.email != null) {
+      try {
+        final userDoc =
+            await _firestore.collection('users').doc(user.email).get();
+        if (mounted && userDoc.exists) {
+          setState(() {
+            userName = userDoc.data()?['name'];
+          });
+        }
+      } catch (e) {
+        print("Error loading user data: $e");
+      }
+    }
+  }
+
+  void _onSearchChanged() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchController.text;
+        });
+      }
+    });
   }
 
   void _initializeNotifications() {
@@ -80,7 +134,7 @@ class _MyFilesPageState extends State<MyFilesPage> {
         NotificationDetails(android: androidPlatformChannelSpecifics);
 
     await flutterLocalNotificationsPlugin.show(
-      2, // Unique ID for upload notification
+      2,
       'Uploading $fileName',
       'Upload in progress: $progress%',
       platformChannelSpecifics,
@@ -156,87 +210,53 @@ class _MyFilesPageState extends State<MyFilesPage> {
     );
   }
 
-  Future<CollectionReference<Map<String, dynamic>>> _getCurrentCollectionRef(
-      String collectionName) async {
-    final user = _auth.currentUser;
-    if (user == null || user.email == null) {
-      throw Exception("User not authenticated or email missing.");
-    }
-    return _firestore
-        .collection('users')
-        .doc(user.email)
-        .collection(collectionName);
-  }
+  // --- Data Loading & Caching ---
 
-  void _fetchAndCacheAllData() async {
+  /// Loads all of the user's files and folders into memory.
+  /// The UI will then filter these lists to display the correct items.
+  Future<void> _loadAllItems() async {
     if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-    });
-
+    setState(() => _isLoading = true);
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
       if (mounted) setState(() => _isLoading = false);
-      _showSnackbar('User not authenticated. Please log in.', success: false);
       return;
     }
 
     try {
-      final userDoc =
-          await _firestore.collection('users').doc(user.email).get();
+      final userDoc = await _firestore.collection('users').doc(user.email).get();
       final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found in user document.");
+      if (uid == null) throw Exception("UID not found.");
 
-      final filesCollectionRef =
+      final filesRef =
           _firestore.collection('users').doc(user.email).collection('files');
-      final foldersCollectionRef =
+      final foldersRef =
           _firestore.collection('users').doc(user.email).collection('folders');
 
-      // For search: fetch ALL files and folders, not just current level
-      Query filesQuery = filesCollectionRef.where('ownerId', isEqualTo: uid);
-      Query foldersQuery = foldersCollectionRef.where('ownerId', isEqualTo: uid);
-
-      // Only filter by parentFolderId when NOT searching
-      if (_searchQuery.isEmpty) {
-        final queryParentId = _currentFolderId;
-        if (queryParentId == null) {
-          filesQuery = filesQuery.where('parentFolderId', isEqualTo: null);
-          foldersQuery = foldersQuery.where('parentFolderId', isEqualTo: null);
-        } else {
-          filesQuery =
-              filesQuery.where('parentFolderId', isEqualTo: queryParentId);
-          foldersQuery =
-              foldersQuery.where('parentFolderId', isEqualTo: queryParentId);
-        }
-      }
-
-      final filesSnapshot = await filesQuery.get();
-      final foldersSnapshot = await foldersQuery.get();
+      final filesSnapshot =
+          await filesRef.where('ownerId', isEqualTo: uid).get();
+      final foldersSnapshot =
+          await foldersRef.where('ownerId', isEqualTo: uid).get();
 
       if (mounted) {
         setState(() {
-          _allFiles =
-              filesSnapshot.docs.map((doc) => FileData.fromFirestore(doc)).toList();
-          _allFolders = foldersSnapshot.docs
+          _allUserFiles = filesSnapshot.docs
+              .map((doc) => FileData.fromFirestore(doc))
+              .toList();
+          _allUserFolders = foldersSnapshot.docs
               .map((doc) => FolderData.fromFirestore(doc))
               .toList();
         });
       }
     } catch (e) {
-      debugPrint('Error fetching data: $e');
-      _showSnackbar(
-          'Failed to load data. Please check your internet and application permissions.',
-          success: false);
+      _showSnackbar('Failed to load files: $e', success: false);
+      debugPrint("Error loading all items: $e");
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // --- File and Folder Management Functions ---
+  // --- Core Actions (Upload, Create, Rename) ---
 
   Future<void> _uploadFile() async {
     try {
@@ -246,7 +266,6 @@ class _MyFilesPageState extends State<MyFilesPage> {
         return;
       }
 
-      // Get user UID from Firestore
       final userDoc =
           await _firestore.collection('users').doc(user.email).get();
       final uid = userDoc.data()?['uid'];
@@ -257,15 +276,12 @@ class _MyFilesPageState extends State<MyFilesPage> {
         return;
       }
 
-      // Let the user pick a single file
       FilePickerResult? result = await FilePicker.platform.pickFiles();
 
       if (result == null || result.files.isEmpty) {
-        _showSnackbar("No file selected", success: false);
         return;
       }
 
-      // Get the selected file path
       final filePath = result.files.single.path;
       if (filePath == null) {
         _showSnackbar("Cannot read the selected file", success: false);
@@ -277,20 +293,16 @@ class _MyFilesPageState extends State<MyFilesPage> {
       final fileSize = result.files.single.size;
       final fileExtension = result.files.single.extension ?? '';
 
-      // Create new file document in Firestore first to get the file ID
       final filesCollection =
           _firestore.collection('users').doc(user.email).collection('files');
       final newFileRef = filesCollection.doc();
       final newFileId = newFileRef.id;
 
-      // Create storage reference with correct path matching the rules
-      // uploads/{userId}/{fileId}/{fileName}
       final storageRef =
           _storage.ref().child('uploads/$uid/$newFileId/$fileName');
 
       _showSnackbar('Uploading file...');
 
-      // Upload file with progress tracking
       final uploadTask = storageRef.putFile(file);
 
       uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
@@ -300,11 +312,8 @@ class _MyFilesPageState extends State<MyFilesPage> {
       });
 
       final snapshot = await uploadTask.whenComplete(() => null);
-
-      // Get download URL
       final downloadUrl = await snapshot.ref.getDownloadURL();
 
-      // Create FileData object
       final newFileData = FileData(
         id: newFileId,
         name: fileName,
@@ -318,22 +327,24 @@ class _MyFilesPageState extends State<MyFilesPage> {
         type: fileExtension,
       );
 
-      // Save file metadata to Firestore
-      await newFileRef.set(newFileData.toMap());
+      final batch = _firestore.batch();
+      batch.set(newFileRef, newFileData.toMap());
 
-      // If file is in a folder, update the folder's files array
       if (_currentFolderId != null && _currentFolderId!.isNotEmpty) {
-        final foldersCollection =
-            _firestore.collection('users').doc(user.email).collection('folders');
+        final foldersCollection = _firestore
+            .collection('users')
+            .doc(user.email)
+            .collection('folders');
         final parentFolderRef = foldersCollection.doc(_currentFolderId);
-        await parentFolderRef
-            .update({'files': FieldValue.arrayUnion([newFileId])});
+        batch.update(
+            parentFolderRef, {'files': FieldValue.arrayUnion([newFileId])});
       }
 
-      // Add to local list
+      await batch.commit();
+
       if (mounted) {
         setState(() {
-          _allFiles.add(newFileData);
+          _allUserFiles.add(newFileData);
         });
       }
 
@@ -357,11 +368,10 @@ class _MyFilesPageState extends State<MyFilesPage> {
 
       final userFoldersCollection =
           _firestore.collection('users').doc(user.email).collection('folders');
+
       final newFolderRef = userFoldersCollection.doc();
       final newFolderId = newFolderRef.id;
-
       final ownerName = userDoc.data()?['name'] ?? 'Unknown';
-
       final newFolderData = FolderData(
         id: newFolderId,
         name: folderName,
@@ -374,17 +384,22 @@ class _MyFilesPageState extends State<MyFilesPage> {
         folders: [],
       );
 
-      await newFolderRef.set(newFolderData.toMap());
+      final batch = _firestore.batch();
+      batch.set(newFolderRef, newFolderData.toMap());
 
       if (_currentFolderId != null && _currentFolderId!.isNotEmpty) {
         final parentFolderRef = userFoldersCollection.doc(_currentFolderId);
-        await parentFolderRef
-            .update({'folders': FieldValue.arrayUnion([newFolderId])});
+        batch.update(
+            parentFolderRef, {'folders': FieldValue.arrayUnion([newFolderId])});
       }
 
-      setState(() {
-        _allFolders.add(newFolderData);
-      });
+      await batch.commit();
+
+      if (mounted) {
+        setState(() {
+          _allUserFolders.add(newFolderData);
+        });
+      }
 
       _showSnackbar('Folder "$folderName" created successfully!');
     } catch (e) {
@@ -393,56 +408,50 @@ class _MyFilesPageState extends State<MyFilesPage> {
     }
   }
 
-  Future<void> _deleteFile(FileData file) async {
-    final user = _auth.currentUser;
-    if (user == null || user.email == null) {
-      _showSnackbar('You must be logged in to delete files.', success: false);
-      return;
-    }
-
+  Future<void> _renameItem(
+      String itemId, String oldName, String newName, String type) async {
     try {
-      final userDoc =
-          await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found.");
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) return;
+      if (oldName == newName) return;
 
-      // Correct storage path matching the upload path
-      final storagePath = 'uploads/$uid/${file.id}/${file.name}';
-      final storageRef = _storage.ref().child(storagePath);
-
-      try {
-        await storageRef.delete();
-      } on FirebaseException catch (e) {
-        if (e.code == 'object-not-found') {
-          debugPrint(
-              'File not found in storage, but proceeding to delete Firestore record.');
-        } else {
-          throw e;
-        }
-      }
-
-      final filesCollection = await _getCurrentCollectionRef('files');
-      await filesCollection.doc(file.id).delete();
+      final targetCollection = _firestore
+          .collection('users')
+          .doc(user.email)
+          .collection(type == 'File' ? 'files' : 'folders');
+      await targetCollection.doc(itemId).update({'name': newName});
 
       setState(() {
-        _allFiles.removeWhere((f) => f.id == file.id);
+        if (type == 'File') {
+          int allIndex = _allUserFiles.indexWhere((f) => f.id == itemId);
+          if (allIndex != -1) {
+            _allUserFiles[allIndex] =
+                _allUserFiles[allIndex].copyWith(name: newName);
+          }
+        } else {
+          int allIndex = _allUserFolders.indexWhere((f) => f.id == itemId);
+          if (allIndex != -1) {
+            _allUserFolders[allIndex] =
+                _allUserFolders[allIndex].copyWith(name: newName);
+          }
+        }
       });
 
-      _showSnackbar('File deleted successfully!');
+      _showSnackbar('Successfully renamed!');
     } catch (e) {
-      _showSnackbar('Failed to delete file: ${e.toString()}', success: false);
-      debugPrint('Delete file error: $e');
+      _showSnackbar('Failed to rename: ${e.toString()}', success: false);
     }
   }
 
-  Future<void> _deleteFolder(FolderData folder) async {
-    // Show a confirmation dialog first, as this is a destructive action.
-    final bool? confirm = await showDialog<bool>(
+  // --- Deletion Logic ---
+
+  Future<bool?> _showDeleteConfirmationDialog(String itemName, String itemType) {
+    return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Folder?'),
+        title: Text('Delete $itemType?'),
         content: Text(
-          'Are you sure you want to permanently delete "${folder.name}" and ALL of its contents? This action cannot be undone.',
+          'Are you sure you want to permanently delete "$itemName"? ${itemType == 'Folder' ? 'This includes ALL of its contents. ' : ''}This action cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -456,110 +465,167 @@ class _MyFilesPageState extends State<MyFilesPage> {
         ],
       ),
     );
+  }
 
-    if (confirm != true) {
-      return; // User cancelled the operation
+  Future<void> _performFileDelete(FileData file) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) throw Exception('User not logged in.');
+
+    final userDoc = await _firestore.collection('users').doc(user.email).get();
+    final uid = userDoc.data()?['uid'];
+    if (uid == null) throw Exception("UID not found.");
+
+    final storagePath = 'uploads/$uid/${file.id}/${file.name}';
+    final storageRef = _storage.ref().child(storagePath);
+
+    try {
+      await storageRef.delete();
+    } on FirebaseException catch (e) {
+      if (e.code == 'object-not-found') {
+        debugPrint(
+            'File not found in storage, proceeding to delete Firestore record.');
+      } else {
+        rethrow;
+      }
     }
 
-    // --- Deletion Logic Starts ---
+    final filesCollection =
+        _firestore.collection('users').doc(user.email).collection('files');
+    await filesCollection.doc(file.id).delete();
+  }
+
+  Future<void> _deleteFile(FileData file) async {
+    final bool? confirm = await _showDeleteConfirmationDialog(file.name, 'File');
+    if (confirm != true) return;
+
+    try {
+      _showSnackbar('Deleting file...');
+      await _performFileDelete(file);
+      _showSnackbar('File deleted successfully!');
+      await _loadAllItems();
+    } catch (e) {
+      _showSnackbar('Failed to delete file: ${e.toString()}', success: false);
+      debugPrint('Delete file error: $e');
+    }
+  }
+
+  Future<void> _performFolderDelete(FolderData folder) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null)
+      throw Exception('User not logged in.');
+
+    final userDoc = await _firestore.collection('users').doc(user.email).get();
+    final uid = userDoc.data()?['uid'];
+    if (uid == null) throw Exception("UID not found.");
+
+    final foldersCollection =
+        _firestore.collection('users').doc(user.email).collection('folders');
+    final filesCollection =
+        _firestore.collection('users').doc(user.email).collection('files');
+
+    Future<void> deleteRecursively(String folderId) async {
+      final filesSnapshot =
+          await filesCollection.where('parentFolderId', isEqualTo: folderId).get();
+      for (final fileDoc in filesSnapshot.docs) {
+        final fileData = FileData.fromFirestore(fileDoc);
+        final storagePath = 'uploads/$uid/${fileData.id}/${fileData.name}';
+        try {
+          await _storage.ref().child(storagePath).delete();
+        } catch (e) {
+          debugPrint(
+              'Could not delete file from storage: ${fileData.name}, Error: $e');
+        }
+        await fileDoc.reference.delete();
+      }
+
+      final subfoldersSnapshot = await foldersCollection
+          .where('parentFolderId', isEqualTo: folderId)
+          .get();
+      for (final subfolderDoc in subfoldersSnapshot.docs) {
+        await deleteRecursively(subfolderDoc.id);
+      }
+      await foldersCollection.doc(folderId).delete();
+    }
+
+    await deleteRecursively(folder.id);
+  }
+
+  Future<void> _deleteFolder(FolderData folder) async {
+    final bool? confirm =
+        await _showDeleteConfirmationDialog(folder.name, 'Folder');
+    if (confirm != true) return;
+
     try {
       _showSnackbar('Deleting folder...');
-      final user = _auth.currentUser;
-      if (user == null || user.email == null) return;
-
-      final userDoc =
-          await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found.");
-
-      final foldersCollection =
-          _firestore.collection('users').doc(user.email).collection('folders');
-      final filesCollection =
-          _firestore.collection('users').doc(user.email).collection('files');
-
-      // This is our recursive helper function
-      Future<void> deleteRecursively(String folderId) async {
-        // 1. Find and delete all files directly inside the current folder
-        final filesSnapshot =
-            await filesCollection.where('parentFolderId', isEqualTo: folderId).get();
-        for (final fileDoc in filesSnapshot.docs) {
-          final fileData = FileData.fromFirestore(fileDoc);
-
-          // Delete from Firebase Storage
-          final storagePath = 'uploads/$uid/${fileData.id}/${fileData.name}';
-          try {
-            await _storage.ref().child(storagePath).delete();
-          } catch (e) {
-            debugPrint(
-                'Could not delete file from storage (may already be gone): ${fileData.name}, Error: $e');
-          }
-
-          // Delete from Firestore
-          await fileDoc.reference.delete();
-        }
-
-        // 2. Find all subfolders directly inside the current folder
-        final subfoldersSnapshot = await foldersCollection
-            .where('parentFolderId', isEqualTo: folderId)
-            .get();
-
-        // 3. Call this function again for each subfolder
-        for (final subfolderDoc in subfoldersSnapshot.docs) {
-          await deleteRecursively(subfolderDoc.id);
-        }
-
-        // 4. After all children are deleted, delete the current folder itself
-        await foldersCollection.doc(folderId).delete();
-      }
-
-      // Start the recursive deletion process from the top-level folder
-      await deleteRecursively(folder.id);
-
-      // Update the UI immediately for a responsive feel
-      if (mounted) {
-        _fetchAndCacheAllData(); // Refresh all data to ensure consistency
-      }
-
+      await _performFolderDelete(folder);
       _showSnackbar(
           'Folder "${folder.name}" and all its contents deleted successfully!');
+      await _loadAllItems();
     } catch (e) {
       _showSnackbar('Failed to delete folder: ${e.toString()}', success: false);
       debugPrint('Delete folder error: $e');
     }
   }
 
-  Future<void> _renameItem(
-      String itemId, String oldName, String newName, String type) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null || user.email == null) return;
-      if (oldName == newName) return;
+  Future<void> _confirmDeleteSelected() async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${_selectedItems.length} items?'),
+        content: const Text(
+            'Are you sure you want to permanently delete the selected items? This includes all contents of selected folders. This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
 
-      final targetCollection =
-          await _getCurrentCollectionRef(type == 'File' ? 'files' : 'folders');
-      final itemRef = targetCollection.doc(itemId);
-
-      await itemRef.update({'name': newName});
-
-      setState(() {
-        if (type == 'File') {
-          final index = _allFiles.indexWhere((f) => f.id == itemId);
-          if (index != -1) {
-            _allFiles[index] = _allFiles[index].copyWith(name: newName);
-          }
-        } else {
-          final index = _allFolders.indexWhere((f) => f.id == itemId);
-          if (index != -1) {
-            _allFolders[index] = _allFolders[index].copyWith(name: newName);
-          }
-        }
-      });
-
-      _showSnackbar('Successfully renamed!');
-    } catch (e) {
-      _showSnackbar('Failed to rename: ${e.toString()}', success: false);
+    if (confirm == true) {
+      await _deleteSelectedItems();
     }
   }
+
+  Future<void> _deleteSelectedItems() async {
+    _showSnackbar('Deleting selected items...');
+    setState(() => _isLoading = true);
+
+    final itemsToDelete = Set<String>.from(_selectedItems);
+
+    List<FileData> filesToDelete =
+        _allUserFiles.where((file) => itemsToDelete.contains(file.id)).toList();
+    List<FolderData> foldersToDelete = _allUserFolders
+        .where((folder) => itemsToDelete.contains(folder.id))
+        .toList();
+
+    try {
+      for (final file in filesToDelete) {
+        await _performFileDelete(file);
+      }
+      for (final folder in foldersToDelete) {
+        await _performFolderDelete(folder);
+      }
+
+      _showSnackbar('Selected items deleted successfully!');
+    } catch (e) {
+      _showSnackbar('An error occurred during deletion: $e', success: false);
+      debugPrint('Multi-delete error: $e');
+    } finally {
+      setState(() {
+        _selectedItems.clear();
+        _isSelectionMode = false;
+      });
+      await _loadAllItems();
+    }
+  }
+
+  // --- UI Build Methods ---
 
   Future<void> _showCreateFolderDialog() async {
     final TextEditingController controller = TextEditingController();
@@ -571,6 +637,7 @@ class _MyFilesPageState extends State<MyFilesPage> {
           content: TextField(
             controller: controller,
             decoration: const InputDecoration(hintText: "Folder Name"),
+            autofocus: true,
           ),
           actions: <Widget>[
             TextButton(
@@ -580,8 +647,8 @@ class _MyFilesPageState extends State<MyFilesPage> {
             TextButton(
               child: const Text('Create'),
               onPressed: () {
-                if (controller.text.isNotEmpty) {
-                  _createFolder(controller.text);
+                if (controller.text.trim().isNotEmpty) {
+                  _createFolder(controller.text.trim());
                   Navigator.of(context).pop();
                 }
               },
@@ -602,7 +669,10 @@ class _MyFilesPageState extends State<MyFilesPage> {
     );
   }
 
+  // --- Navigation & Selection Mode Logic ---
+
   void _openFolder(String folderId, String folderName) {
+    // UPDATED ROUTE
     context.push('/student_my_files/$folderId', extra: folderName);
   }
 
@@ -610,39 +680,79 @@ class _MyFilesPageState extends State<MyFilesPage> {
     context.pop();
   }
 
-  String _getItemPath(dynamic item) {
-    if (_currentFolderId == null) {
-      return 'My Files';
-    } else {
-      return '.../${_currentFolderName}';
-    }
+  void _toggleSelection(String itemId) {
+    setState(() {
+      if (_selectedItems.contains(itemId)) {
+        _selectedItems.remove(itemId);
+      } else {
+        _selectedItems.add(itemId);
+      }
+      if (_selectedItems.isEmpty) {
+        _isSelectionMode = false;
+      }
+    });
   }
 
+  void _cancelSelection() {
+    setState(() {
+      _isSelectionMode = false;
+      _selectedItems.clear();
+    });
+  }
+
+  String _getItemPath(dynamic item) {
+    if (_searchQuery.isNotEmpty) {
+      final parentFolderId = item.parentFolderId;
+      if (parentFolderId == null) {
+        return 'My Files';
+      }
+      final parentFolder = _allUserFolders
+          .where((f) => f.id == parentFolderId)
+          .firstOrNull;
+      return parentFolder?.name ?? 'My Files';
+    }
+    return _currentFolderName ?? 'My Files';
+  }
+
+  /// This method is the single source of truth for what is displayed.
+  /// It filters the master lists (_allUserFolders, _allUserFiles) to get the correct items.
   List<dynamic> _getFilteredItems() {
-    List<dynamic> items = [];
     final lowerCaseQuery = _searchQuery.toLowerCase();
+    List<dynamic> itemsToDisplay;
 
-    List<dynamic> unsortedItems = [];
-    if (_searchTab == 'All' || _searchTab == 'Folders') {
-      unsortedItems.addAll(_allFolders);
-    }
-    if (_searchTab == 'All' || _searchTab == 'Files') {
-      unsortedItems.addAll(_allFiles);
+    if (lowerCaseQuery.isNotEmpty) {
+      // Search logic: filter all items by name.
+      final filteredFolders = _allUserFolders.where(
+          (folder) => folder.name.toLowerCase().contains(lowerCaseQuery));
+      final filteredFiles = _allUserFiles
+          .where((file) => file.name.toLowerCase().contains(lowerCaseQuery));
+      itemsToDisplay = [...filteredFolders, ...filteredFiles];
+    } else {
+      // Normal display logic: filter all items by the current parent folder ID.
+      final currentFolders = _allUserFolders
+          .where((folder) => folder.parentFolderId == _currentFolderId);
+      final currentFiles = _allUserFiles
+          .where((file) => file.parentFolderId == _currentFolderId);
+      itemsToDisplay = [...currentFolders, ...currentFiles];
     }
 
-    unsortedItems.sort((a, b) {
+    // Apply tab filter
+    if (_searchTab != 'All') {
+      itemsToDisplay = itemsToDisplay.where((item) {
+        if (_searchTab == 'Files') return item is FileData;
+        if (_searchTab == 'Folders') return item is FolderData;
+        return false;
+      }).toList();
+    }
+
+    // Sort: folders first, then alphabetically
+    itemsToDisplay.sort((a, b) {
       if (a is FolderData && b is FileData) return -1;
       if (a is FileData && b is FolderData) return 1;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
 
-    if (_searchQuery.isEmpty) {
-      return unsortedItems;
-    } else {
-      return unsortedItems
-          .where((item) => item.name.toLowerCase().contains(lowerCaseQuery))
-          .toList();
-    }
+    return itemsToDisplay;
   }
 
   String _formatBytes(int bytes, [int decimals = 0]) {
@@ -655,169 +765,290 @@ class _MyFilesPageState extends State<MyFilesPage> {
 
     return ((bytes / (1 << (i * 10))).toStringAsFixed(decimals)) + suffixes[i];
   }
+  
+  // *** NEW HELPER WIDGET ***
+  Widget _buildAddItem(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 40, color: Colors.blue[800]),
+          const SizedBox(height: 8),
+          Text(label),
+        ],
+      ),
+    );
+  }
+
+  // --- AppBars and Build Method ---
+
+  AppBar _buildNormalAppBar() {
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      leading: widget.folderId != null
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.black),
+              onPressed: _goBack,
+            )
+          : null,
+      title: Text(
+        _currentFolderName ?? 'My Files',
+        style:
+            const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+      ),
+      centerTitle: true,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline, color: Colors.black),
+          // *** UPDATED UI ACTION ***
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text("Add Content"),
+                content: SizedBox(
+                  // Sizing the dialog content
+                  width: MediaQuery.of(context).size.width * 0.8,
+                  height: MediaQuery.of(context).size.height * 0.15,
+                  child: GridView.count(
+                    crossAxisCount: 2,
+                    shrinkWrap: true,
+                    children: [
+                      _buildAddItem(
+                          Icons.create_new_folder_outlined, 'New Folder', () {
+                        Navigator.pop(context);
+                        _showCreateFolderDialog();
+                      }),
+                      _buildAddItem(Icons.upload_file, 'Upload File', () {
+                        Navigator.pop(context);
+                        _uploadFile();
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  AppBar _buildSelectionAppBar() {
+    return AppBar(
+      backgroundColor: Colors.blueGrey[800],
+      leading: IconButton(
+        icon: const Icon(Icons.close, color: Colors.white),
+        onPressed: _cancelSelection,
+      ),
+      title: Text('${_selectedItems.length} selected'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.white),
+          onPressed: _confirmDeleteSelected,
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     List<dynamic> filteredItems = _getFilteredItems();
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: widget.folderId != null
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.black),
-                onPressed: _goBack,
-              )
-            : null,
-        title: Text(_currentFolderName ?? 'My Files',
-            style: const TextStyle(color: Colors.black)),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline, color: Colors.black),
-            onPressed: () {
-              showModalBottomSheet(
-                context: context,
-                builder: (context) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.create_new_folder),
-                      title: const Text('Create New Folder'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _showCreateFolderDialog();
-                      },
+    return WillPopScope(
+      onWillPop: () async {
+        if (_isSelectionMode) {
+          _cancelSelection();
+          return false;
+        }
+        return true;
+      },
+      child: Scaffold(
+        appBar:
+            _isSelectionMode ? _buildSelectionAppBar() : _buildNormalAppBar(),
+        body: RefreshIndicator(
+          onRefresh: _loadAllItems,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: const InputDecoration(
+                      icon: Icon(Icons.search, color: Colors.grey),
+                      hintText: 'Search all files and folders',
+                      border: InputBorder.none,
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.upload_file),
-                      title: const Text('Upload File'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _uploadFile();
-                      },
-                    ),
-                  ],
+                  ),
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextField(
-                      onChanged: (value) {
-                        setState(() => _searchQuery = value);
-                        // Refetch data to search globally
-                        _fetchAndCacheAllData();
-                      },
-                      decoration: const InputDecoration(
-                        icon: Icon(Icons.search, color: Colors.grey),
-                        hintText: 'Search all files and folders',
-                        border: InputBorder.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: ['All', 'Files', 'Folders'].map((tab) {
-                      final isSelected = _searchTab == tab;
-                      return GestureDetector(
-                        onTap: () => setState(() => _searchTab = tab),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color:
-                                    isSelected ? Colors.blue : Colors.transparent,
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                          child: Text(
-                            tab,
-                            style: TextStyle(
-                              color: isSelected ? Colors.blue : Colors.grey,
-                              fontWeight: isSelected
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: ['All', 'Files', 'Folders'].map((tab) {
+                    final isSelected = _searchTab == tab;
+                    return GestureDetector(
+                      onTap: () => setState(() => _searchTab = tab),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color:
+                                  isSelected ? Colors.blue : Colors.transparent,
+                              width: 2,
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 24),
-                  if (filteredItems.isEmpty)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
                         child: Text(
-                          _searchQuery.isEmpty
-                              ? 'No files or folders here. Tap the + button to create one.'
-                              : 'No results found for "$_searchQuery"',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey[500]),
+                          tab,
+                          style: TextStyle(
+                            color: isSelected ? Colors.blue : Colors.grey,
+                            fontWeight:
+                                isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
                         ),
                       ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: filteredItems.length,
-                      itemBuilder: (context, index) {
-                        final item = filteredItems[index];
-                        if (item is FileData) {
-                          return _buildFileTile(item, _getItemPath(item));
-                        } else if (item is FolderData) {
-                          return _buildFolderTile(item, _getItemPath(item));
-                        }
-                        return const SizedBox.shrink();
-                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 24),
+                if (_isLoading)
+                  const Center(child: Padding(
+                    padding: EdgeInsets.all(32.0),
+                    child: CircularProgressIndicator(),
+                  ))
+                else if (filteredItems.isEmpty)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _searchQuery.isNotEmpty
+                                ? Icons.search_off
+                                : Icons.folder_open,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _searchQuery.isEmpty
+                                ? 'No files or folders here.\nTap the + button to create one.'
+                                : 'No results found for "$_searchQuery"',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 16),
+                          ),
+                        ],
+                      ),
                     ),
-                ],
-              ),
+                  )
+                else
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: filteredItems.length,
+                    itemBuilder: (context, index) {
+                      final item = filteredItems[index];
+                      if (item is FileData) {
+                        return _buildFileTile(item, _getItemPath(item));
+                      } else if (item is FolderData) {
+                        return _buildFolderTile(item, _getItemPath(item));
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
+              ],
             ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildFolderTile(FolderData folder, String path) {
+    final isSelected = _selectedItems.contains(folder.id);
     return ListTile(
-      leading: Icon(Icons.folder_outlined, color: Colors.blue[800]),
-      title: Text(folder.name),
-      subtitle: Text(path, style: const TextStyle(color: Colors.grey)),
-      trailing: _buildItemPopupMenu('Folder', folder),
-      onTap: () => _openFolder(folder.id, folder.name),
+      leading: _isSelectionMode
+          ? Icon(
+              isSelected ? Icons.check_box : Icons.check_box_outline_blank,
+              color: Colors.blue[800],
+              size: 40,
+            )
+          : Icon(Icons.folder_outlined, color: Colors.blue[800], size: 40),
+      title: Text(
+        folder.name,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        path,
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      trailing: _isSelectionMode ? null : _buildItemPopupMenu('Folder', folder),
+      onTap: () {
+        if (_isSelectionMode) {
+          _toggleSelection(folder.id);
+        } else {
+          _openFolder(folder.id, folder.name);
+        }
+      },
+      onLongPress: () {
+        if (!_isSelectionMode) {
+          setState(() {
+            _isSelectionMode = true;
+            _selectedItems.add(folder.id);
+          });
+        }
+      },
     );
   }
 
   Widget _buildFileTile(FileData file, String path) {
+    final isSelected = _selectedItems.contains(file.id);
     return ListTile(
-      leading: Icon(_getFileIcon(file.type), color: Colors.blue[800]),
-      title: Text(file.name),
-      subtitle: Text('${path} - ${_formatBytes(file.size)}',
-          style: const TextStyle(color: Colors.grey)),
-      trailing: _buildItemPopupMenu('File', file),
+      leading: _isSelectionMode
+          ? Icon(
+              isSelected ? Icons.check_box : Icons.check_box_outline_blank,
+              color: Colors.blue[800],
+              size: 40,
+            )
+          : Icon(_getFileIcon(file.type), color: Colors.blue[800], size: 40),
+      title: Text(
+        file.name,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        '${_formatBytes(file.size)}',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      trailing: _isSelectionMode ? null : _buildItemPopupMenu('File', file),
       onTap: () {
-        context.push('/file_viewer', extra: file);
+        if (_isSelectionMode) {
+          _toggleSelection(file.id);
+        } else {
+          context.push('/file_viewer', extra: file);
+        }
+      },
+      onLongPress: () {
+        if (!_isSelectionMode) {
+          setState(() {
+            _isSelectionMode = true;
+            _selectedItems.add(file.id);
+          });
+        }
       },
     );
   }
@@ -831,31 +1062,11 @@ class _MyFilesPageState extends State<MyFilesPage> {
     return PopupMenuButton<String>(
       onSelected: (String value) async {
         if (value == 'delete') {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text('Delete $type'),
-              content: Text(
-                  'Are you sure you want to delete "$itemName"? This action cannot be undone.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    if (type == 'File') {
-                      _deleteFile(fileData!);
-                    } else {
-                      _deleteFolder(folderData!);
-                    }
-                  },
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          );
+          if (type == 'File') {
+            _deleteFile(fileData!);
+          } else {
+            _deleteFolder(folderData!);
+          }
         } else if (value == 'rename') {
           final TextEditingController controller =
               TextEditingController(text: itemName);
@@ -875,8 +1086,9 @@ class _MyFilesPageState extends State<MyFilesPage> {
                   ),
                   TextButton(
                     onPressed: () {
-                      if (controller.text.isNotEmpty) {
-                        _renameItem(itemId, itemName, controller.text, type);
+                      if (controller.text.trim().isNotEmpty) {
+                        _renameItem(
+                            itemId, itemName, controller.text.trim(), type);
                         Navigator.of(context).pop();
                       }
                     },
@@ -886,8 +1098,6 @@ class _MyFilesPageState extends State<MyFilesPage> {
               );
             },
           );
-        } else if (value == 'move') {
-          _showSnackbar('Move operation is not yet implemented.', success: false);
         } else if (value == 'details' && type == 'File') {
           if (fileData != null) {
             context.push('/file_details', extra: fileData);
@@ -922,23 +1132,16 @@ class _MyFilesPageState extends State<MyFilesPage> {
             ),
           ),
           const PopupMenuItem<String>(
-            value: 'move',
-            child: ListTile(
-              leading: Icon(Icons.folder_copy_outlined),
-              title: Text('Move'),
-            ),
-          ),
-          const PopupMenuItem<String>(
             value: 'delete',
             child: ListTile(
-              leading: Icon(Icons.delete_outline),
-              title: Text('Delete'),
+              leading: Icon(Icons.delete_outline, color: Colors.red),
+              title: Text('Delete', style: TextStyle(color: Colors.red)),
             ),
           ),
         ];
 
         if (type == 'File') {
-          items.addAll([
+          items.insertAll(1, [
             const PopupMenuItem<String>(
               value: 'download',
               child: ListTile(
