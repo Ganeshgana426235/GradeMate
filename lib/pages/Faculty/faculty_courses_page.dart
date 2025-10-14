@@ -31,6 +31,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   String? userName;
   bool isLoading = true;
 
+  // **NEW**: To track user's favorite files
+  List<String> _favoriteFilePaths = [];
+
   // Navigation state
   List<String> breadcrumbs = ['Branches'];
   String? currentBranch;
@@ -67,10 +70,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     flutterLocalNotificationsPlugin.initialize(initSettings);
   }
 
-  // --- Activity Logging ---
   Future<void> _logActivity(String action, Map<String, dynamic> details) async {
     if (_auth.currentUser == null || _auth.currentUser!.email == null) return;
-
     final userEmail = _auth.currentUser!.email!;
     final activityData = {
       'userEmail': userEmail,
@@ -79,12 +80,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       'timestamp': FieldValue.serverTimestamp(),
       'details': details,
     };
-
     try {
-      // Log to the main activities collection
       await _firestore.collection('activities').add(activityData);
-
-      // Log to the user-specific activities subcollection
       await _firestore
           .collection('users')
           .doc(userEmail)
@@ -95,7 +92,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  // --- Notification Helper Functions ---
   Future<void> _showProgressNotification(String title, String fileName,
       int progress, int notificationId) async {
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
@@ -145,20 +141,21 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     setState(() {
       isLoading = true;
     });
-
     try {
       final user = _auth.currentUser;
       if (user != null && user.email != null) {
         final userDocRef = _firestore.collection('users').doc(user.email!);
         final userDoc = await userDocRef.get();
-
         if (userDoc.exists) {
           final data = userDoc.data();
-          if (data != null && data.containsKey('collegeId')) {
+          if (data != null) {
             setState(() {
               collegeId = data['collegeId'];
               userRole = data['role'];
               userName = data['name'];
+              // **NEW**: Load favorite paths
+              _favoriteFilePaths =
+                  List<String>.from(data['favorites'] ?? []);
               isLoading = false;
             });
           } else {
@@ -179,6 +176,78 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       }
     }
   }
+
+  // **NEW**: Adds a file's path to the user's recently accessed list.
+  Future<void> _addToRecentlyAccessed(DocumentSnapshot doc) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    final userRef = _firestore.collection('users').doc(user.email);
+    final fileRefPath = doc.reference.path;
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(userRef);
+        final data = snapshot.data();
+
+        List<String> recentlyAccessed = data?['recentlyAccessed'] != null
+            ? List<String>.from(data!['recentlyAccessed'])
+            : [];
+
+        // Remove if it exists, then add to the front
+        recentlyAccessed.remove(fileRefPath);
+        recentlyAccessed.insert(0, fileRefPath);
+
+        // Keep the list at a reasonable size (e.g., 10 items)
+        if (recentlyAccessed.length > 10) {
+          recentlyAccessed = recentlyAccessed.sublist(0, 10);
+        }
+
+        transaction.update(userRef, {'recentlyAccessed': recentlyAccessed});
+      });
+    } catch (e) {
+      print("Error updating recently accessed: $e");
+    }
+  }
+
+  // **NEW**: Adds or removes a file's path from the user's favorites list.
+  Future<void> _toggleFavorite(DocumentSnapshot doc) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("You must be logged in to manage favorites.")),
+      );
+      return;
+    }
+    final userRef = _firestore.collection('users').doc(user.email);
+    final fileRefPath = doc.reference.path;
+    final isFavorite = _favoriteFilePaths.contains(fileRefPath);
+
+    try {
+      if (isFavorite) {
+        await userRef.update({
+          'favorites': FieldValue.arrayRemove([fileRefPath])
+        });
+        setState(() => _favoriteFilePaths.remove(fileRefPath));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Removed from favorites')),
+        );
+      } else {
+        await userRef.update({
+          'favorites': FieldValue.arrayUnion([fileRefPath])
+        });
+        setState(() => _favoriteFilePaths.add(fileRefPath));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Added to favorites')),
+        );
+      }
+    } catch (e) {
+       ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error updating favorites: $e')),
+      );
+    }
+  }
+
 
   void _navigateBack() {
     setState(() {
@@ -262,6 +331,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             onPressed: () async {
               if (shortNameController.text.isNotEmpty &&
                   fullNameController.text.isNotEmpty) {
+                // **MODIFIED**: Trim and convert to uppercase
                 await _addBranch(
                   shortNameController.text.trim().toUpperCase(),
                   fullNameController.text.trim(),
@@ -338,6 +408,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
+                // **MODIFIED**: Trim and convert to uppercase
                 await _addRegulationToAllBranches(
                     regulationController.text.trim().toUpperCase());
                 Navigator.pop(context); // Pop loading indicator
@@ -437,6 +508,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
+                // **MODIFIED**: Trim and convert to uppercase
                 await _addYearToAllBranches(
                     yearController.text.trim().toUpperCase());
                 Navigator.pop(context); // Pop loading indicator
@@ -525,6 +597,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           ElevatedButton(
             onPressed: () async {
               if (subjectController.text.isNotEmpty) {
+                // Subjects can be mixed case, so just trim.
                 await _addSubject(subjectController.text.trim());
                 Navigator.pop(context);
               }
@@ -759,7 +832,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  Future<void> _openExternalUrl(String? url) async {
+  Future<void> _openExternalUrl(DocumentSnapshot doc) async {
+    final data = doc.data() as Map<String, dynamic>;
+    final url = data['url'];
+
     if (url == null || url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -769,6 +845,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       );
       return;
     }
+    
+    // **NEW**: Add to recently accessed when opened.
+    await _addToRecentlyAccessed(doc);
 
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
@@ -1524,6 +1603,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     final size = fileData['size'] != null ? _formatBytes(fileData['size']) : '';
     final owner = fileData['ownerName'] ?? 'Unknown';
     final isSelected = _selectedItemIds.contains(doc.id);
+    final isFavorite = _favoriteFilePaths.contains(doc.reference.path);
 
     return ListTile(
       leading: isSelected
@@ -1541,10 +1621,22 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         if (_isSelectionMode) {
           _toggleSelection(doc.id);
         } else {
+          final fileURL = fileData['fileURL'] as String?;
+          if (fileURL == null || fileURL.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Cannot open file: URL is missing.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+
+          _addToRecentlyAccessed(doc);
           final file = FileData(
             id: doc.id,
             name: fileData['fileName'] ?? 'Untitled',
-            url: fileData['fileURL'] ?? '',
+            url: fileURL,
             type: fileData['type'] ?? 'unknown',
             size: fileData['size'] ?? 0,
             uploadedAt: fileData['timestamp'] ?? Timestamp.now(),
@@ -1565,10 +1657,12 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                 if (value == 'rename') _showRenameDialog(doc);
                 if (value == 'delete') _confirmDeleteFile(doc);
                 if (value == 'edit_access') _showEditAccessDialog(doc);
+                if (value == 'favorite') _toggleFavorite(doc);
               },
               itemBuilder: (context) => [
                 const PopupMenuItem(value: 'download', child: Text('Download')),
                 const PopupMenuItem(value: 'share', child: Text('Share')),
+                PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 const PopupMenuItem(
                     value: 'edit_access', child: Text('Edit Access')),
@@ -1581,9 +1675,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
 
   Widget _buildLinkTile(DocumentSnapshot doc) {
     final linkData = doc.data() as Map<String, dynamic>;
-    final url = linkData['url'];
     final owner = linkData['ownerName'] ?? 'Unknown';
     final isSelected = _selectedItemIds.contains(doc.id);
+    final isFavorite = _favoriteFilePaths.contains(doc.reference.path);
 
     return ListTile(
       tileColor: isSelected ? Colors.blue.withOpacity(0.2) : null,
@@ -1601,21 +1695,23 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         if (_isSelectionMode) {
           _toggleSelection(doc.id);
         } else {
-          _openExternalUrl(url);
+          _openExternalUrl(doc);
         }
       },
       onLongPress: () => _toggleSelection(doc.id),
       trailing: !_isSelectionMode
           ? PopupMenuButton<String>(
               onSelected: (value) {
-                if (value == 'open_external') _openExternalUrl(url);
+                if (value == 'open_external') _openExternalUrl(doc);
                 if (value == 'rename') _showRenameDialog(doc);
                 if (value == 'delete') _confirmDeleteFile(doc);
                 if (value == 'edit_access') _showEditAccessDialog(doc);
+                if (value == 'favorite') _toggleFavorite(doc);
               },
               itemBuilder: (context) => [
                 const PopupMenuItem(
                     value: 'open_external', child: Text('Open in Browser')),
+                PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 const PopupMenuItem(
                     value: 'edit_access', child: Text('Edit Access')),

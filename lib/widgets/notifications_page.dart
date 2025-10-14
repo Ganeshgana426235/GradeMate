@@ -18,9 +18,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   void initState() {
     super.initState();
-    _markNotificationsAsRead();
+    // **MODIFIED**: Add a short delay before marking notifications as read.
+    // This allows the user to see which notifications are new (highlighted)
+    // before they are marked as read in the database.
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _markNotificationsAsRead();
+      }
+    });
   }
 
+  /// Finds all unread notifications that are due and updates their status to 'isRead: true'.
+  /// This version fetches based on a single field to avoid the Firestore composite index requirement.
   Future<void> _markNotificationsAsRead() async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) return;
@@ -30,32 +39,39 @@ class _NotificationsPageState extends State<NotificationsPage> {
         .doc(user.email)
         .collection('notifications');
 
-    // Get all unread notifications that have passed their timestamp
+    // Step 1: Fetch all unread notifications.
     final unreadSnapshot = await notificationsRef
         .where('isRead', isEqualTo: false)
-        .where('timestamp', isLessThanOrEqualTo: Timestamp.now())
         .get();
 
-    if (unreadSnapshot.docs.isEmpty) {
-      return; // No notifications to mark as read
+    // Step 2: Filter on the client-side to find the ones that are due.
+    final now = Timestamp.now();
+    final docsToUpdate = unreadSnapshot.docs.where((doc) {
+      final data = doc.data();
+      final timestamp = data['timestamp'] as Timestamp?;
+      return timestamp != null && timestamp.compareTo(now) <= 0;
+    }).toList();
+
+
+    if (docsToUpdate.isEmpty) {
+      return; // No new notifications to mark as read
     }
 
-    // Use a batch write to update all documents at once for efficiency
+    // Step 3: Use a batch write to update only the filtered documents.
     final batch = _firestore.batch();
-    for (final doc in unreadSnapshot.docs) {
+    for (final doc in docsToUpdate) {
       batch.update(doc.reference, {'isRead': true});
     }
 
     try {
       await batch.commit();
-      print('${unreadSnapshot.docs.length} notifications marked as read.');
+      print('${docsToUpdate.length} notifications marked as read.');
     } catch (e) {
       print('Error marking notifications as read: $e');
     }
   }
 
   /// Fetches notifications whose timestamp is in the past or present.
-  /// Future-dated notifications will not be included in this stream.
   Stream<QuerySnapshot> _getNotificationsStream() {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
@@ -65,7 +81,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
         .collection('users')
         .doc(user.email)
         .collection('notifications')
-        // **CHANGE**: Only fetch notifications that are due
         .where('timestamp', isLessThanOrEqualTo: Timestamp.now())
         .orderBy('timestamp', descending: true)
         .snapshots();
@@ -137,7 +152,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
       color: isRead ? Colors.transparent : Colors.blue.withOpacity(0.05),
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: Row(
-        // **CHANGE**: Align items to the center vertically
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           CircleAvatar(
@@ -176,8 +190,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
     if (type == 'reminder') {
       return Icons.alarm;
     }
-    // Add more icon types for other notifications (e.g., assignments)
-    // if (type == 'assignment') return Icons.assignment;
     return Icons.notifications;
   }
 
@@ -202,7 +214,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
       );
     }
 
-    // Default format for other notifications
     return TextSpan(
       style: const TextStyle(color: Colors.black87, fontSize: 15),
       children: [
@@ -231,3 +242,4 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 }
+

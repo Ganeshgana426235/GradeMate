@@ -36,6 +36,7 @@ import 'package:grademate/pages/Faculty/send_notification_page.dart';
 import 'package:grademate/pages/Faculty/manage_students_page.dart';
 import 'package:grademate/widgets/notifications_page.dart';
 import 'package:grademate/widgets/favorites_page.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -89,14 +90,14 @@ final _router = GoRouter(
           routes: [
             GoRoute(
       path: '/student_my_files',
-      builder: (context, state) => const MyFilesPage(),
+      builder: (context, state) => const StudentMyFilesPage(),
       routes: [
         GoRoute(
           path: ':folderId',
           builder: (context, state) {
             final folderId = state.pathParameters['folderId'];
             final folderName = state.extra as String?;
-            return MyFilesPage(folderId: folderId, folderName: folderName);
+            return StudentMyFilesPage(folderId: folderId, folderName: folderName);
           },
         ),
       ],
@@ -252,6 +253,11 @@ final _router = GoRouter(
 );
 
 void main() async {
+
+  
+  await dotenv.load(fileName: ".env"); // Load the .env file
+  
+
   WidgetsFlutterBinding.ensureInitialized();
   await _requestPermissions();
 
@@ -287,6 +293,7 @@ Future<void> _requestPermissions() async {
   print("Storage Permission: ${statuses[Permission.storage]}");
   print("Notification Permission: ${statuses[Permission.notification]}");
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
