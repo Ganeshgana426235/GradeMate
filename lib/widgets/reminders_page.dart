@@ -174,7 +174,7 @@ class _RemindersPageState extends State<RemindersPage>
     if (reminderDoc != null) {
       final data = reminderDoc.data() as Map<String, dynamic>;
       titleController.text = data['title'];
-      descriptionController.text = data['description'];
+      descriptionController.text = data['description'] ?? '';
       final reminderTime = (data['reminderTime'] as Timestamp).toDate();
       selectedDate = reminderTime;
       selectedTime = TimeOfDay.fromDateTime(reminderTime);
@@ -183,103 +183,140 @@ class _RemindersPageState extends State<RemindersPage>
 
     return showDialog(
       context: context,
+      barrierColor: Colors.black.withOpacity(0.6),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              title:
-                  Text(reminderDoc == null ? 'New Reminder' : 'Edit Reminder'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: titleController,
-                      decoration:
-                          const InputDecoration(labelText: 'Reminder Title'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: descriptionController,
-                      decoration: const InputDecoration(labelText: 'Description'),
-                      maxLines: 3,
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            selectedDate == null
-                                ? 'No date chosen'
-                                : DateFormat('yMd').format(selectedDate!),
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        reminderDoc == null ? 'New Reminder' : 'Edit Reminder',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text("Reminder Title", style: TextStyle(color: Colors.grey[700])),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: titleController,
+                        decoration: InputDecoration(
+                          hintText: "e.g., Doctor's appointment",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text("Description", style: TextStyle(color: Colors.grey[700])),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: descriptionController,
+                        decoration: InputDecoration(
+                          hintText: "e.g., At the clinic on 5th Ave",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        maxLines: null,
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            selectedDate == null ? 'No date chosen' : DateFormat('EEE, MMM d, yyyy').format(selectedDate!),
+                            style: const TextStyle(fontSize: 16),
                           ),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            final date = await showDatePicker(
-                              context: context,
-                              initialDate: selectedDate ?? DateTime.now(),
-                              firstDate: DateTime.now(),
-                              lastDate: DateTime(2100),
-                            );
-                            if (date != null) {
-                              setDialogState(() => selectedDate = date);
-                            }
-                          },
-                          child: const Text('Choose Date'),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            selectedTime == null
-                                ? 'No time chosen'
-                                : selectedTime!.format(context),
+                          TextButton(
+                            onPressed: () async {
+                              final now = DateTime.now();
+                              final date = await showDatePicker(
+                                context: context,
+                                initialDate: selectedDate ?? now,
+                                // **FIX**: Allow picking today's date
+                                firstDate: DateTime(now.year, now.month, now.day),
+                                lastDate: DateTime(2101),
+                              );
+                              if (date != null) {
+                                setDialogState(() => selectedDate = date);
+                              }
+                            },
+                            child: const Text('Choose Date'),
                           ),
+                        ],
+                      ),
+                      const Divider(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            selectedTime == null ? 'No time chosen' : selectedTime!.format(context),
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              final time = await showTimePicker(
+                                context: context,
+                                initialTime: selectedTime ?? TimeOfDay.now(),
+                              );
+                              if (time != null) {
+                                setDialogState(() => selectedTime = time);
+                              }
+                            },
+                            child: const Text('Choose Time'),
+                          ),
+                        ],
+                      ),
+                       const Divider(),
+                      const SizedBox(height: 8),
+                       Text("Repeat", style: TextStyle(color: Colors.grey[700])),
+                       const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: recurrence,
+                        items: ['Once', 'Daily', 'Weekly', 'Monthly']
+                            .map((label) => DropdownMenuItem(
+                                  value: label,
+                                  child: Text(label),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setDialogState(() => recurrence = value);
+                          }
+                        },
+                         decoration: InputDecoration(
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                         ),
-                        TextButton(
-                          onPressed: () async {
-                            final time = await showTimePicker(
-                              context: context,
-                              initialTime: selectedTime ?? TimeOfDay.now(),
-                            );
-                            if (time != null) {
-                              setDialogState(() => selectedTime = time);
-                            }
-                          },
-                          child: const Text('Choose Time'),
-                        ),
-                      ],
-                    ),
-                    DropdownButtonFormField<String>(
-                      value: recurrence,
-                      items: ['Once', 'Daily', 'Weekly', 'Monthly']
-                          .map((label) => DropdownMenuItem(
-                                value: label,
-                                child: Text(label),
-                              ))
-                          .toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() => recurrence = value);
-                        }
-                      },
-                      decoration: const InputDecoration(labelText: 'Repeat'),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (titleController.text.isNotEmpty &&
-                        descriptionController.text.isNotEmpty &&
+                      ),
+                      const SizedBox(height: 32),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+                          ),
+                          const SizedBox(width: 12),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.deepPurple,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            ),
+                            onPressed: () async {
+                               if (titleController.text.isNotEmpty &&
                         selectedDate != null &&
                         selectedTime != null) {
                       var status = await Permission.scheduleExactAlarm.status;
@@ -296,10 +333,11 @@ class _RemindersPageState extends State<RemindersPage>
                         selectedTime!.minute,
                       );
 
-                      if (reminderDateTime.isBefore(DateTime.now())) {
+                      // **FIX**: Only check for past time if it's a non-recurring reminder
+                      if (recurrence == 'Once' && reminderDateTime.isBefore(DateTime.now())) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                           content:
-                              Text('Cannot set a reminder for a past time.'),
+                              Text('Cannot set a one-time reminder for a past time.'),
                           backgroundColor: Colors.orange,
                         ));
                         return;
@@ -322,11 +360,22 @@ class _RemindersPageState extends State<RemindersPage>
                         );
                       }
                       Navigator.pop(context);
+                    } else {
+                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content:
+                              Text('Please provide a title, date, and time.'),
+                          backgroundColor: Colors.orange,
+                        ));
                     }
-                  },
-                  child: const Text('Save'),
+                            },
+                            child: const Text('Save', style: TextStyle(fontSize: 16)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             );
           },
         );
@@ -400,7 +449,6 @@ class _RemindersPageState extends State<RemindersPage>
       return;
     }
 
-    // *** START: Add notification to Firestore ***
     final user = _auth.currentUser;
     if (user != null && user.email != null) {
       try {
@@ -412,14 +460,13 @@ class _RemindersPageState extends State<RemindersPage>
           'title': title,
           'body': body,
           'timestamp': Timestamp.fromDate(scheduledTime),
-          'type': 'reminder', // To identify the notification type
+          'type': 'reminder', 
           'isRead': false,
         });
       } catch (e) {
         print("Error saving notification to Firestore: $e");
       }
     }
-    // *** END: Add notification to Firestore ***
 
     DateTimeComponents? dateTimeComponents;
     switch (recurrence) {
@@ -433,7 +480,7 @@ class _RemindersPageState extends State<RemindersPage>
         dateTimeComponents = DateTimeComponents.dayOfMonthAndTime;
         break;
       default:
-        dateTimeComponents = null; // For 'Once'
+        dateTimeComponents = null;
     }
 
     const AndroidNotificationDetails androidDetails =
@@ -480,19 +527,6 @@ class _RemindersPageState extends State<RemindersPage>
     }
   }
 
-  IconData _getRecurrenceIcon(String recurrence) {
-    switch (recurrence) {
-      case 'Daily':
-        return Icons.repeat;
-      case 'Weekly':
-        return Icons.calendar_view_week;
-      case 'Monthly':
-        return Icons.calendar_month;
-      default:
-        return Icons.alarm;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -501,6 +535,7 @@ class _RemindersPageState extends State<RemindersPage>
         if (!didPop) _navigateBack();
       },
       child: Scaffold(
+        backgroundColor: Colors.grey[50],
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.black),
@@ -510,9 +545,10 @@ class _RemindersPageState extends State<RemindersPage>
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
           elevation: 1,
+          centerTitle: true,
         ),
         body: StreamBuilder<QuerySnapshot>(
-          stream: _remindersCollection.snapshots(),
+          stream: _remindersCollection.orderBy('reminderTime').snapshots(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -521,45 +557,61 @@ class _RemindersPageState extends State<RemindersPage>
               return const Center(
                   child: Text("Error loading reminders. Please log in again."));
             }
+            // **FIX**: Updated UI for when no reminders are found.
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24.0),
-                  child: Text(
-                    'No reminders set.\nTap the + button to add one.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.alarm_off_outlined, size: 80, color: Colors.grey[400]),
+                     const SizedBox(height: 24),
+                    Text(
+                      'No reminders yet.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                     Text(
+                      'Tap the + button to add one.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.grey[500]),
+                    ),
+                  ],
                 ),
               );
             }
             final reminders = snapshot.data!.docs;
             return ListView.builder(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(16),
               itemCount: reminders.length,
               itemBuilder: (context, index) {
                 final reminder = reminders[index];
                 final data = reminder.data() as Map<String, dynamic>;
                 final reminderTime =
                     (data['reminderTime'] as Timestamp).toDate();
-                final recurrence = data['recurrence'] ?? 'Once';
                 final notificationId = data['notificationId'] ?? 0;
 
                 return Card(
-                  elevation: 2,
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  elevation: 0,
+                  color: Colors.white,
+                  margin: const EdgeInsets.only(bottom: 16),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(16)),
                   child: InkWell(
                     onTap: () => _showReminderDialog(reminderDoc: reminder),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                     child: Padding(
-                      padding: const EdgeInsets.all(16.0),
+                      padding: const EdgeInsets.all(20.0),
                       child: Row(
                         children: [
-                          Icon(_getRecurrenceIcon(recurrence),
-                              color: Colors.blue[800], size: 32),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.deepPurple.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(50)
+                            ),
+                            child: Icon(Icons.alarm, color: Colors.deepPurple, size: 28),
+                          ),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Column(
@@ -568,24 +620,25 @@ class _RemindersPageState extends State<RemindersPage>
                                 Text(data['title'],
                                     style: const TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 16)),
-                                const SizedBox(height: 4),
-                                Text(data['description'],
-                                    style:
-                                        const TextStyle(color: Colors.black54)),
+                                        fontSize: 17)),
+                                const SizedBox(height: 6),
+                                if (data['description'] != null && data['description'].isNotEmpty)
+                                  Text(data['description'],
+                                      style:
+                                          TextStyle(color: Colors.grey[600], fontSize: 15)),
                                 const SizedBox(height: 8),
                                 Text(
-                                  DateFormat('MMM d, yyyy \'at\' HH:mm')
+                                  DateFormat('EEE, MMM d \'at\' hh:mm a')
                                       .format(reminderTime),
                                   style: TextStyle(
-                                      color: Colors.grey[700], fontSize: 12),
+                                      color: Colors.grey[800], fontSize: 13, fontWeight: FontWeight.w500),
                                 ),
                               ],
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.delete_outline,
-                                color: Colors.redAccent),
+                            icon: Icon(Icons.delete_outline,
+                                color: Colors.grey[500]),
                             onPressed: () =>
                                 _deleteReminder(reminder.id, notificationId),
                           ),
@@ -600,10 +653,14 @@ class _RemindersPageState extends State<RemindersPage>
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: () => _showReminderDialog(),
-          backgroundColor: Colors.blue[800],
-          child: const Icon(Icons.add_alarm, color: Colors.white),
+          backgroundColor: Colors.deepPurple,
+          foregroundColor: Colors.white,
+          elevation: 4,
+          shape: const CircleBorder(),
+          child: const Icon(Icons.add, size: 32),
         ),
       ),
     );
   }
 }
+

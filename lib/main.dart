@@ -38,6 +38,9 @@ import 'package:grademate/widgets/notifications_page.dart';
 import 'package:grademate/widgets/favorites_page.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+// ✅ Add for FlutterQuill localization support
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -89,19 +92,20 @@ final _router = GoRouter(
         StatefulShellBranch(
           routes: [
             GoRoute(
-      path: '/student_my_files',
-      builder: (context, state) => const StudentMyFilesPage(),
-      routes: [
-        GoRoute(
-          path: ':folderId',
-          builder: (context, state) {
-            final folderId = state.pathParameters['folderId'];
-            final folderName = state.extra as String?;
-            return StudentMyFilesPage(folderId: folderId, folderName: folderName);
-          },
-        ),
-      ],
-    ),
+              path: '/student_my_files',
+              builder: (context, state) => const StudentMyFilesPage(),
+              routes: [
+                GoRoute(
+                  path: ':folderId',
+                  builder: (context, state) {
+                    final folderId = state.pathParameters['folderId'];
+                    final folderName = state.extra as String?;
+                    return StudentMyFilesPage(
+                        folderId: folderId, folderName: folderName);
+                  },
+                ),
+              ],
+            ),
           ],
         ),
         StatefulShellBranch(
@@ -137,20 +141,21 @@ final _router = GoRouter(
         ),
         StatefulShellBranch(
           routes: [
-             GoRoute(
-      path: '/faculty_my_files',
-      builder: (context, state) => const FacultyMyFilesPage(),
-      routes: [
-        GoRoute(
-          path: ':folderId',
-          builder: (context, state) {
-            final folderId = state.pathParameters['folderId'];
-            final folderName = state.extra as String?;
-            return FacultyMyFilesPage(folderId: folderId, folderName: folderName);
-          },
-        ),
-      ],
-    ),
+            GoRoute(
+              path: '/faculty_my_files',
+              builder: (context, state) => const FacultyMyFilesPage(),
+              routes: [
+                GoRoute(
+                  path: ':folderId',
+                  builder: (context, state) {
+                    final folderId = state.pathParameters['folderId'];
+                    final folderName = state.extra as String?;
+                    return FacultyMyFilesPage(
+                        folderId: folderId, folderName: folderName);
+                  },
+                ),
+              ],
+            ),
           ],
         ),
         StatefulShellBranch(
@@ -211,7 +216,6 @@ final _router = GoRouter(
     final isAuthenticated = user != null;
     final isVerified = isAuthenticated ? user.emailVerified : false;
 
-    // Check if Hive box is open, get role
     final userBox =
         Hive.isBoxOpen('userBox') ? Hive.box<String>('userBox') : null;
     final role = userBox?.get('role');
@@ -223,14 +227,11 @@ final _router = GoRouter(
       '/',
     ].contains(state.uri.toString());
 
-    // 1. Not logged in OR Not verified: Must go to auth pages.
     if (!isAuthenticated || !isVerified) {
-      // Clear local storage if we end up here to ensure a fresh start
       if (userBox != null) userBox.clear();
       return isAuthPage ? null : '/login';
     }
 
-    // 2. Logged in and verified: Redirect away from auth pages to their respective home page.
     if (isAuthPage) {
       if (role == 'Student') {
         return '/student_home';
@@ -238,62 +239,48 @@ final _router = GoRouter(
         return '/faculty_home';
       }
 
-      // Fallback if local role is missing despite Firebase login, force relogin
       if (role == null) {
-        // Firebase sign out removes the Firebase user object, forcing redirect back to /login on next check
         FirebaseAuth.instance.signOut();
         if (userBox != null) userBox.clear();
         return '/login';
       }
     }
 
-    // 3. Allow navigation (e.g., already on /student_home, or accessing /file_details)
     return null;
   },
 );
 
 void main() async {
-
-  
-  await dotenv.load(fileName: ".env"); // Load the .env file
-  
+  await dotenv.load(fileName: ".env");
 
   WidgetsFlutterBinding.ensureInitialized();
   await _requestPermissions();
 
   tz.initializeTimeZones();
-  tz.setLocalLocation(
-      tz.getLocation('Asia/Kolkata')); // Set for India Standard Time
+  tz.setLocalLocation(tz.getLocation('Asia/Kolkata'));
 
-  // [START HIVE INITIALIZATION]
   final appDocumentDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDocumentDir.path);
-  // Opens the box for string data storage
   await Hive.openBox<String>('userBox');
-  // [END HIVE INITIALIZATION]
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Enable Firestore offline persistence
   FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
 
   runApp(const MyApp());
 }
 
 Future<void> _requestPermissions() async {
-  // Request multiple permissions at once.
   Map<Permission, PermissionStatus> statuses = await [
     Permission.storage,
     Permission.notification,
   ].request();
 
-  // You can check the status of each permission if needed
   print("Storage Permission: ${statuses[Permission.storage]}");
   print("Notification Permission: ${statuses[Permission.notification]}");
 }
-
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -311,6 +298,18 @@ class MyApp extends StatelessWidget {
           primarySwatch: Colors.blue,
           fontFamily: 'Roboto',
         ),
+
+        // ✅ Added localization support for FlutterQuill
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+          quill.FlutterQuillLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('en'),
+          Locale('hi'),
+        ],
       ),
     );
   }
