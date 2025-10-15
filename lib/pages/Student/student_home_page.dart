@@ -1,10 +1,14 @@
+import 'dart:convert';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:grademate/models/file_models.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -18,6 +22,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _activities = [];
   List<Map<String, dynamic>> _upcomingReminders = [];
+  List<Map<String, dynamic>> _recentlyAccessedItems = [];
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -33,6 +38,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     await _loadUserData();
     await _loadActivities();
     await _loadUpcomingReminders();
+    await _loadRecentlyAccessedFiles(); // Added call
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -145,7 +151,74 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
   }
 
-  // **FIX**: Added time filter to only count notifications that are due
+  // **NEW**: Added function to load recently accessed files
+  Future<void> _loadRecentlyAccessedFiles() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    final userDocRef = _firestore.collection('users').doc(user.email);
+    final userDoc = await userDocRef.get();
+
+    if (!userDoc.exists || userDoc.data()?['recentlyAccessed'] == null) {
+      return;
+    }
+
+    List<String> paths = List<String>.from(userDoc.data()!['recentlyAccessed']);
+    List<Map<String, dynamic>> validItems = [];
+    List<String> invalidPaths = [];
+
+    for (String path in paths) {
+      try {
+        final fileDoc = await _firestore.doc(path).get();
+        if (fileDoc.exists) {
+          final data = fileDoc.data() as Map<String, dynamic>;
+          data['id'] = fileDoc.id;
+          data['path'] = fileDoc.reference.path;
+          validItems.add(data);
+        } else {
+          invalidPaths.add(path);
+        }
+      } catch (e) {
+        print("Error fetching recent file at path $path: $e");
+        invalidPaths.add(path);
+      }
+    }
+
+    if (invalidPaths.isNotEmpty) {
+      await userDocRef.update({
+        'recentlyAccessed': FieldValue.arrayRemove(invalidPaths),
+      });
+    }
+
+    if (mounted) {
+      setState(() {
+        _recentlyAccessedItems = validItems;
+      });
+    }
+  }
+
+  // **NEW**: Added function to open external URLs
+  Future<void> _openExternalUrl(String? url) async {
+    if (url == null || url.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link: URL is empty.')),
+        );
+      }
+      return;
+    }
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open URL: $url')),
+        );
+      }
+    }
+  }
+
   Stream<int> _getUnreadNotificationsCountStream() {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
@@ -156,7 +229,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         .doc(user.email)
         .collection('notifications')
         .where('isRead', isEqualTo: false)
-        .where('timestamp', isLessThanOrEqualTo: Timestamp.now()) // The fix is here
+        .where('timestamp', isLessThanOrEqualTo: Timestamp.now())
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
   }
@@ -172,21 +245,28 @@ class _StudentHomePageState extends State<StudentHomePage> {
     ];
 
     return Scaffold(
+      // **MODIFIED**: AppBar updated to match faculty page
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Home', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-        centerTitle: true,
+        automaticallyImplyLeading: false,
+        title: Text(
+          'GradeMate',
+          style: GoogleFonts.playwriteDeGrund(
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         actions: [
           StreamBuilder<int>(
             stream: _getUnreadNotificationsCountStream(),
             builder: (context, snapshot) {
               final count = snapshot.data ?? 0;
               return Stack(
-                alignment: Alignment.center,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.notifications_outlined, color: Colors.black),
+                    icon: const Icon(Icons.notifications_outlined,
+                        color: Colors.black),
                     onPressed: () => context.push('/notifications'),
                   ),
                   if (count > 0)
@@ -196,13 +276,14 @@ class _StudentHomePageState extends State<StudentHomePage> {
                       child: Container(
                         padding: const EdgeInsets.all(2),
                         decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(10)),
+                        constraints:
+                            const BoxConstraints(minWidth: 16, minHeight: 16),
                         child: Text(
                           '$count',
-                          style: const TextStyle(color: Colors.white, fontSize: 10),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 10),
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -224,12 +305,28 @@ class _StudentHomePageState extends State<StudentHomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 16),
-                    Text(
-                      'Hello, ${_userName ?? 'Student'}',
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
+                    // **MODIFIED**: Greeting text updated with gradient
+                    RichText(
+                      text: TextSpan(
+                        style: const TextStyle(
+                            fontSize: 28, color: Colors.black87),
+                        children: <TextSpan>[
+                          const TextSpan(text: 'Hello, '),
+                          TextSpan(
+                            text: _userName ?? 'Student',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              foreground: Paint()
+                                ..shader = const LinearGradient(
+                                  colors: <Color>[
+                                    Colors.blueAccent,
+                                    Colors.purpleAccent
+                                  ],
+                                ).createShader(const Rect.fromLTWH(
+                                    0.0, 0.0, 200.0, 70.0)),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 32),
@@ -243,7 +340,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     ),
                     const SizedBox(height: 16),
                     GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
                         crossAxisSpacing: 16,
                         mainAxisSpacing: 16,
@@ -277,6 +375,17 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     const SizedBox(height: 16),
                     _buildUpcomingSection(),
                     const SizedBox(height: 32),
+                    // **NEW**: Recently Accessed Section Added
+                    const Text(
+                      'Recently Accessed',
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildRecentlyAccessedSection(),
+                    const SizedBox(height: 32),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -296,7 +405,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     ),
                     const SizedBox(height: 16),
                     _buildRecentActivityList(),
-                     const SizedBox(height: 20),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
@@ -328,6 +437,95 @@ class _StudentHomePageState extends State<StudentHomePage> {
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // **NEW**: Widget to build the recently accessed section
+  Widget _buildRecentlyAccessedSection() {
+    if (_recentlyAccessedItems.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+            color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
+        child: Center(
+          child: Text("Files you open will appear here.",
+              style: TextStyle(color: Colors.grey[600], fontSize: 15)),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 140,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _recentlyAccessedItems.length,
+        itemBuilder: (context, index) {
+          final item = _recentlyAccessedItems[index];
+          return _buildRecentFileCard(item);
+        },
+      ),
+    );
+  }
+
+  // **NEW**: Widget to build a single card for a recently accessed file
+  Widget _buildRecentFileCard(Map<String, dynamic> item) {
+    final String itemName = item['fileName'] ?? item['title'] ?? 'Unknown';
+    final String itemType = item['type'] ?? 'unknown';
+
+    return GestureDetector(
+      onTap: () {
+        final isLink = item['type'] == 'link';
+        if (isLink) {
+          _openExternalUrl(item['url'] as String?);
+        } else {
+          final file = FileData(
+            id: item['id'] ?? '',
+            name: itemName,
+            url: item['fileURL'] ?? item['url'] ?? '', // Crucial fallback
+            type: itemType,
+            size: item['size'] ?? 0,
+            uploadedAt: item['timestamp'] ?? Timestamp.now(),
+            ownerId: item['ownerId'] ?? item['uploadedBy'] ?? '',
+            ownerName: item['ownerName'] ?? '',
+          );
+
+          if (file.url.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Cannot open file: URL is missing.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+          context.push('/file_viewer', extra: file);
+        }
+      },
+      child: Container(
+        width: 120,
+        margin: const EdgeInsets.only(right: 16),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.teal.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(_getFileIcon(itemType), size: 40, color: Colors.teal[800]),
+            const SizedBox(height: 12),
+            Text(
+              itemName,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -481,6 +679,35 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return Icons.lock_open_outlined;
     }
     return Icons.history;
+  }
+  
+  // **NEW**: Helper function to get the correct icon for a file type
+  IconData _getFileIcon(String? extension) {
+    switch (extension?.toLowerCase()) {
+      case 'pdf':
+        return Icons.picture_as_pdf_outlined;
+      case 'doc':
+      case 'docx':
+        return Icons.description_outlined;
+      case 'ppt':
+      case 'pptx':
+        return Icons.slideshow_outlined;
+      case 'xls':
+      case 'xlsx':
+        return Icons.table_chart_outlined;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+        return Icons.image_outlined;
+      case 'zip':
+      case 'rar':
+        return Icons.folder_zip_outlined;
+      case 'link':
+        return Icons.link;
+      default:
+        return Icons.insert_drive_file_outlined;
+    }
   }
 
   String _formatTimestamp(Timestamp timestamp) {
