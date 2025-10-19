@@ -20,8 +20,10 @@ import 'package:grademate/pages/Student/student_home_page.dart';
 import 'package:grademate/pages/Student/student_courses_page.dart';
 import 'package:grademate/pages/Student/student_profile_page.dart';
 import 'package:grademate/pages/Student/student_my_files_page.dart';
+import 'package:grademate/pages/Student/student_ai_page.dart';
 import 'package:grademate/pages/Faculty/faculty_home_page.dart';
 import 'package:grademate/pages/Faculty/faculty_courses_page.dart';
+import 'package:grademate/pages/Faculty/faculty_ai_page.dart';
 import 'package:grademate/pages/Faculty/faculty_profile_page.dart';
 import 'package:grademate/pages/Faculty/faculty_my_files_page.dart';
 import 'package:grademate/widgets/file_details_page.dart';
@@ -37,10 +39,25 @@ import 'package:grademate/pages/Faculty/manage_students_page.dart';
 import 'package:grademate/widgets/notifications_page.dart';
 import 'package:grademate/widgets/favorites_page.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
-// ✅ Add for FlutterQuill localization support
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
+import 'package:firebase_messaging/firebase_messaging.dart'; // [NEW IMPORT]
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // [NEW IMPORT]
+
+
+// [NEW FCM BACKGROUND HANDLER]
+/// Must be a top-level function, cannot be a method of a class.
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you use other Firebase services in the background, initialize them here.
+  // Since we are just logging/handling a simple data message, we often don't need a full init
+  // if Firebase is already initialized in main.
+  print("Handling a background message: ${message.messageId}");
+  
+  // NOTE: If the Cloud Function sends a *Notification* payload, the OS handles displaying it.
+  // If it sends a *Data* payload, you must use flutter_local_notifications here to show a banner.
+}
+
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -86,6 +103,19 @@ final _router = GoRouter(
             GoRoute(
               path: '/student_courses',
               builder: (context, state) => const StudentCoursesPage(),
+            ),
+          ],
+        ),
+        // **CRITICAL CHANGE HERE**
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/student_ai',
+              builder: (context, state) {
+                // This allows the AI page to receive the file object
+                final file = state.extra as FileData?;
+                return StudentAIPage(initialFile: file);
+              },
             ),
           ],
         ),
@@ -136,6 +166,18 @@ final _router = GoRouter(
             GoRoute(
               path: '/faculty_courses',
               builder: (context, state) => const FacultyCoursesPage(),
+            ),
+          ],
+        ),
+         StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/faculty_ai',
+              builder: (context, state) {
+                // This allows the AI page to receive the file object
+                final file = state.extra as FileData?;
+                return FacultyAIPage(initialFile: file);
+              },
             ),
           ],
         ),
@@ -250,6 +292,61 @@ final _router = GoRouter(
   },
 );
 
+// [NEW FCM SETUP FUNCTION]
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> _setupFCM() async {
+  // 1. Initialize background handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // 2. Local notification setup for foreground messages (Android/iOS requires this)
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  // 3. Foreground message listener (Shows a local notification when app is open)
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    print('Got a message whilst in the foreground!');
+    print('Message data: ${message.data}');
+
+    RemoteNotification? notification = message.notification;
+    AndroidNotification? android = message.notification?.android;
+
+    if (notification != null && android != null) {
+      flutterLocalNotificationsPlugin.show(
+        notification.hashCode,
+        notification.title,
+        notification.body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'new_file_channel', // Must match the channel ID used in the Cloud Function
+            'New Content Uploads',
+            channelDescription: 'Notifications for new course materials.',
+            icon: android.smallIcon,
+          ),
+        ),
+      );
+    }
+  });
+
+  // 4. Handle notification tap (if app is closed/in background and user taps banner)
+  // This logic should navigate the user to the correct page based on the message data.
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    print('A new onMessageOpenedApp event was published!');
+    final route = message.data['route']; // Example: Get a custom route from the data payload
+    if (route != null) {
+      // You can use the router to navigate here, e.g., to the courses page
+      // _router.go(route);
+    }
+  });
+}
+
+
 void main() async {
   await dotenv.load(fileName: ".env");
 
@@ -266,6 +363,9 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  
+  // [NEW] Setup FCM handlers right after Firebase initialization
+  await _setupFCM(); 
 
   FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
 
@@ -298,8 +398,6 @@ class MyApp extends StatelessWidget {
           primarySwatch: Colors.blue,
           fontFamily: 'Roboto',
         ),
-
-        // ✅ Added localization support for FlutterQuill
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
           GlobalWidgetsLocalizations.delegate,

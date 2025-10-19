@@ -13,30 +13,38 @@ class BottomNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BottomNavigationBar(
-      items: const <BottomNavigationBarItem>[
+      type: BottomNavigationBarType.fixed, // Ensures all labels are visible
+      currentIndex: selectedIndex,
+      onTap: onItemTapped,
+      selectedItemColor: Theme.of(context).primaryColor,
+      unselectedItemColor: Colors.grey,
+      items: const [
         BottomNavigationBarItem(
           icon: Icon(Icons.home_outlined),
+          activeIcon: Icon(Icons.home),
           label: 'Home',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.menu_book_outlined),
-          label: 'My Course',
+          icon: Icon(Icons.school_outlined),
+          activeIcon: Icon(Icons.school),
+          label: 'Courses',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.folder_open_outlined),
+          icon: Icon(Icons.auto_awesome_outlined),
+          activeIcon: Icon(Icons.auto_awesome),
+          label: 'AI',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.folder_outlined),
+          activeIcon: Icon(Icons.folder),
           label: 'My Files',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.person_outlined),
+          icon: Icon(Icons.person_outline),
+          activeIcon: Icon(Icons.person),
           label: 'Profile',
         ),
       ],
-      currentIndex: selectedIndex,
-      selectedItemColor: Colors.blue[800],
-      unselectedItemColor: Colors.grey,
-      onTap: onItemTapped,
-      type: BottomNavigationBarType.fixed,
-      backgroundColor: Colors.white,
     );
   }
 }

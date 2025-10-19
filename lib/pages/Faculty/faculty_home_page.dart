@@ -9,6 +9,7 @@ import 'package:grademate/models/file_models.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shimmer/shimmer.dart'; // **NEW: Import Shimmer**
 
 class FacultyHomePage extends StatefulWidget {
   const FacultyHomePage({super.key});
@@ -35,6 +36,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   }
 
   Future<void> _loadInitialData() async {
+    setState(() => _isLoading = true); // Ensure loading state is set true
     await _loadUserData();
     await _loadActivities();
     await _loadUpcomingReminders();
@@ -288,7 +290,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const _FacultyHomeShimmer() // **MODIFIED: Show Shimmer**
           : RefreshIndicator(
               onRefresh: _loadInitialData,
               child: SingleChildScrollView(
@@ -613,7 +615,8 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
       case 'doc': case 'docx': return Icons.description_outlined;
       case 'ppt': case 'pptx': return Icons.slideshow_outlined;
       case 'xls': case 'xlsx': return Icons.table_chart_outlined;
-      case 'jpg': case 'jpeg': case 'png': case 'gif': return Icons.image_outlined;
+      case 'jpg': case 'jpeg': return Icons.image_outlined;
+      case 'png': case 'gif': return Icons.image_outlined;
       case 'zip': case 'rar': return Icons.folder_zip_outlined;
       case 'link': return Icons.link;
       default: return Icons.insert_drive_file_outlined;
@@ -663,3 +666,184 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   }
 }
 
+// ----------------------------------------------------------------------
+// NEW SHIMMER EFFECT WIDGET
+// ----------------------------------------------------------------------
+
+class _FacultyHomeShimmer extends StatelessWidget {
+  const _FacultyHomeShimmer();
+
+  Widget _buildPlaceholderBox({double width = double.infinity, double height = 16, double radius = 8}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+
+  Widget _buildQuickAccessPlaceholder() {
+    return GridView.builder(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        childAspectRatio: 2.8,
+      ),
+      itemCount: 4, // Match number of expected items
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemBuilder: (context, index) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              _buildPlaceholderBox(width: 24, height: 24, radius: 12),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildPlaceholderBox(height: 14, width: 80),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildUpcomingCardPlaceholder() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        children: [
+          _buildPlaceholderBox(width: 24, height: 24, radius: 12),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPlaceholderBox(width: 150, height: 16),
+                const SizedBox(height: 8),
+                _buildPlaceholderBox(width: 200, height: 14, radius: 6),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentFileCardPlaceholder() {
+    return Container(
+      width: 120,
+      margin: const EdgeInsets.only(right: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _buildPlaceholderBox(width: 40, height: 40, radius: 8),
+          const SizedBox(height: 12),
+          _buildPlaceholderBox(width: 100, height: 14),
+          const SizedBox(height: 4),
+          _buildPlaceholderBox(width: 80, height: 14),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivityCardPlaceholder() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildPlaceholderBox(width: 24, height: 24, radius: 12),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPlaceholderBox(width: double.infinity, height: 15, radius: 6),
+                const SizedBox(height: 8),
+                _buildPlaceholderBox(width: 100, height: 12, radius: 6),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+            // Greeting Placeholder
+            _buildPlaceholderBox(width: 250, height: 28, radius: 14),
+            const SizedBox(height: 32),
+
+            // Quick Access Section
+            _buildPlaceholderBox(width: 150, height: 20),
+            const SizedBox(height: 16),
+            _buildQuickAccessPlaceholder(),
+            const SizedBox(height: 32),
+
+            // Upcoming Section
+            _buildPlaceholderBox(width: 120, height: 20),
+            const SizedBox(height: 16),
+            _buildUpcomingCardPlaceholder(),
+            _buildUpcomingCardPlaceholder(),
+            const SizedBox(height: 32),
+
+            // Recently Accessed Section
+            _buildPlaceholderBox(width: 200, height: 20),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 140,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: 3,
+                itemBuilder: (context, index) => _buildRecentFileCardPlaceholder(),
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Recent Activity Section
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildPlaceholderBox(width: 180, height: 20),
+                _buildPlaceholderBox(width: 60, height: 16),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _buildActivityCardPlaceholder(),
+            _buildActivityCardPlaceholder(),
+            _buildActivityCardPlaceholder(),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -23,13 +23,13 @@ android {
     val flutterVersionCode = getFlutterProperty("flutter.versionCode")
     val flutterVersionName = getFlutterProperty("flutter.versionName")
 
-    compileSdkVersion(35)
+    compileSdkVersion(36)
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.example.grademate"
-        minSdkVersion(23)
-        targetSdkVersion(35)
+        minSdkVersion(24)
+        targetSdkVersion(36)
         versionCode = flutterVersionCode?.toInt() ?: 1
         versionName = flutterVersionName ?: "1.0"
     }

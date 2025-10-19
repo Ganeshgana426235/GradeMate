@@ -18,6 +18,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shimmer/shimmer.dart'; // **NEW: Import Shimmer**
+
 
 class FacultyMyFilesPage extends StatefulWidget {
   final String? folderId;
@@ -36,6 +38,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   String? _currentFolderId;
   String? _currentFolderName;
   String? userName;
+  String? _userUid; // Store UID once
 
   List<FolderData> _allUserFolders = [];
   List<FileData> _allUserFiles = [];
@@ -55,6 +58,11 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounceTimer;
 
+  // NEW: Stream subscriptions for real-time updates and cache handling
+  StreamSubscription<QuerySnapshot>? _filesSubscription;
+  StreamSubscription<QuerySnapshot>? _foldersSubscription;
+  StreamSubscription<QuerySnapshot>? _allFoldersSubscription; // For breadcrumbs
+
   @override
   void initState() {
     super.initState();
@@ -70,25 +78,33 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     _debounceTimer?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _filesSubscription?.cancel();
+    _foldersSubscription?.cancel();
+    _allFoldersSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> _loadInitialData() async {
+    // 1. Get user data (UID, Name, Favorites)
     await _loadUserData();
-    await _loadAllItems();
+    // 2. Start listeners for current folder contents (Cache-First)
+    _startListeners();
+    // 3. Build the folder path using the stream of all folders
     await _buildFolderPath(_currentFolderId);
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _loadUserData() async {
     final user = _auth.currentUser;
     if (user != null && user.email != null) {
       try {
-        final userDoc =
-            await _firestore.collection('users').doc(user.email).get();
+        // Reads user data once (cache-first via global settings)
+        final userDoc = await _firestore.collection('users').doc(user.email).get(); 
         if (mounted && userDoc.exists) {
           final data = userDoc.data();
           setState(() {
             userName = data?['name'];
+            _userUid = data?['uid'];
             _favoriteFileIds = List<String>.from(data?['favorites'] ?? []);
           });
         }
@@ -96,6 +112,103 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
         print("Error loading user data: $e");
       }
     }
+  }
+
+  // NEW: Implements the Real-Time Listener approach (Cache-First)
+  void _startListeners({bool forceServerFetch = false}) {
+    if (_userUid == null) {
+      _loadUserData().then((_) => _startListeners(forceServerFetch: forceServerFetch));
+      return;
+    }
+
+    _filesSubscription?.cancel();
+    _foldersSubscription?.cancel();
+    _allFoldersSubscription?.cancel();
+
+    final userFilesRef = _firestore.collection('users').doc(_auth.currentUser!.email).collection('files');
+    final userFoldersRef = _firestore.collection('users').doc(_auth.currentUser!.email).collection('folders');
+
+    // 1. Listener for files in the CURRENT folder
+    final filesQuery = userFilesRef
+        .where('ownerId', isEqualTo: _userUid)
+        .where('parentFolderId', isEqualTo: _currentFolderId);
+
+    // If forcing server refresh, use a one-time get(Source.server) first
+    if (forceServerFetch) {
+        filesQuery.get(const GetOptions(source: Source.server)).then((snapshot) {
+            if (mounted) {
+                setState(() {
+                    _allUserFiles = snapshot.docs.map((doc) => FileData.fromFirestore(doc)).toList();
+                    _isLoading = false; 
+                });
+            }
+        });
+    }
+
+    // Start the persistent listener (defaults to cache-first, then updates)
+    _filesSubscription = filesQuery.snapshots().listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _allUserFiles = snapshot.docs.map((doc) => FileData.fromFirestore(doc)).toList();
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error listening to files: $e");
+    });
+
+
+    // 2. Listener for folders in the CURRENT folder
+    final foldersQuery = userFoldersRef
+        .where('ownerId', isEqualTo: _userUid)
+        .where('parentFolderId', isEqualTo: _currentFolderId);
+    
+    // If forcing server refresh, use a one-time get(Source.server) first
+    if (forceServerFetch) {
+        foldersQuery.get(const GetOptions(source: Source.server)).then((snapshot) {
+            if (mounted) {
+                setState(() {
+                    _allUserFolders = snapshot.docs.map((doc) => FolderData.fromFirestore(doc)).toList();
+                    _isLoading = false; 
+                });
+            }
+        });
+    }
+
+    // Start the persistent listener (defaults to cache-first, then updates)
+    _foldersSubscription = foldersQuery.snapshots().listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _allUserFolders = snapshot.docs.map((doc) => FolderData.fromFirestore(doc)).toList();
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error listening to folders: $e");
+    });
+    
+    // 3. Listener for ALL folders (needed for breadcrumbs, always cache-first)
+    final allFoldersQuery = userFoldersRef
+        .where('ownerId', isEqualTo: _userUid);
+
+    _allFoldersSubscription = allFoldersQuery.snapshots().listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _allUserFolders = snapshot.docs.map((doc) => FolderData.fromFirestore(doc)).toList();
+          _buildFolderPath(_currentFolderId);
+        });
+      }
+    }, onError: (e) {
+      debugPrint("Error listening to all folders: $e");
+    });
+
+    if (!forceServerFetch && mounted) setState(() => _isLoading = false);
+  }
+
+  // MODIFIED: Refreshes by forcing a server fetch
+  Future<void> _refreshItems() async {
+    if (mounted) setState(() => _isLoading = true);
+    // Cancel and restart listeners, forcing Source.server to ensure fresh data
+    _startListeners(forceServerFetch: true);
+    // Note: The setState to _isLoading=false is handled inside _startListeners
   }
 
   Future<void> _logActivity(String action, Map<String, dynamic> details) async {
@@ -243,7 +356,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
         AndroidNotificationDetails(
       'download_completion_channel_id',
       'Download Complete',
-      channelDescription: 'Notifies when a download is finished',
+      channelDescription: 'Notifies when an download is finished',
       importance: Importance.high,
       priority: Priority.high,
     );
@@ -252,36 +365,6 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     await flutterLocalNotificationsPlugin.show(
       1, 'Download Complete', 'The file "$fileName" has been downloaded successfully.', platformChannelSpecifics,
     );
-  }
-
-  Future<void> _loadAllItems() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-    final user = _auth.currentUser;
-    if (user == null || user.email == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-    try {
-      final userDoc = await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found.");
-      final filesRef = _firestore.collection('users').doc(user.email).collection('files');
-      final foldersRef = _firestore.collection('users').doc(user.email).collection('folders');
-      final filesSnapshot = await filesRef.where('ownerId', isEqualTo: uid).get();
-      final foldersSnapshot = await foldersRef.where('ownerId', isEqualTo: uid).get();
-      if (mounted) {
-        setState(() {
-          _allUserFiles = filesSnapshot.docs.map((doc) => FileData.fromFirestore(doc)).toList();
-          _allUserFolders = foldersSnapshot.docs.map((doc) => FolderData.fromFirestore(doc)).toList();
-        });
-      }
-    } catch (e) {
-      _showSnackbar('Failed to load files: $e', success: false);
-      debugPrint("Error loading all items: $e");
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
   }
 
   Future<bool> _verifyImageIsStudyMaterial(File imageFile) async {
@@ -348,17 +431,13 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     if (!await _isConnected()) return;
     try {
       final user = _auth.currentUser;
-      if (user == null || user.email == null) {
-        _showSnackbar('You must be logged in to upload files.', success: false);
+      if (user == null || user.email == null || _userUid == null) {
+        _showSnackbar('User information is missing. Please log in again.', success: false);
         return;
       }
-      final userDoc = await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      final ownerName = userDoc.data()?['name'] ?? 'Unknown';
-      if (uid == null) {
-        _showSnackbar('Failed to get user information.', success: false);
-        return;
-      }
+      final uid = _userUid!;
+      final ownerName = userName ?? 'Unknown';
+
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'txt', 'zip', 'rar'],
@@ -407,9 +486,9 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       }
       await batch.commit();
       await _logActivity('Uploaded File', {'fileName': fileName, 'parentFolder': _currentFolderName});
-      if (mounted) {
-        setState(() => _allUserFiles.add(newFileData));
-      }
+      
+      // The Firestore listener handles the UI update now.
+      
       await _showUploadCompletionNotification(fileName);
       _showSnackbar('File "$fileName" uploaded successfully!');
     } catch (e) {
@@ -420,15 +499,13 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   Future<void> _createFolder(String folderName) async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    if (user == null || user.email == null || _userUid == null) return;
     try {
-      final userDoc = await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found.");
+      final uid = _userUid!;
       final userFoldersCollection = _firestore.collection('users').doc(user.email).collection('folders');
       final newFolderRef = userFoldersCollection.doc();
       final newFolderId = newFolderRef.id;
-      final ownerName = userDoc.data()?['name'] ?? 'Unknown';
+      final ownerName = userName ?? 'Unknown';
       final newFolderData = FolderData(
         id: newFolderId, name: folderName, ownerId: uid, ownerName: ownerName, parentFolderId: _currentFolderId,
         sharedWith: [], createdAt: Timestamp.now(), files: [], folders: [],
@@ -441,9 +518,9 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       }
       await batch.commit();
       await _logActivity('Created Folder', {'folderName': folderName, 'parentFolder': _currentFolderName});
-      if (mounted) {
-        setState(() => _allUserFolders.add(newFolderData));
-      }
+      
+      // The Firestore listener handles the UI update now.
+
       _showSnackbar('Folder "$folderName" created successfully!');
     } catch (e) {
       _showSnackbar('Failed to create folder: $e', success: false);
@@ -457,17 +534,12 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       if (user == null || user.email == null) return;
       if (oldName == newName) return;
       final targetCollection = _firestore.collection('users').doc(user.email).collection(type == 'File' ? 'files' : 'folders');
+      
+      // Single write operation; the listener handles UI update
       await targetCollection.doc(itemId).update({'name': newName});
+      
       await _logActivity('Renamed Item', {'type': type, 'oldName': oldName, 'newName': newName});
-      setState(() {
-        if (type == 'File') {
-          int allIndex = _allUserFiles.indexWhere((f) => f.id == itemId);
-          if (allIndex != -1) _allUserFiles[allIndex] = _allUserFiles[allIndex].copyWith(name: newName);
-        } else {
-          int allIndex = _allUserFolders.indexWhere((f) => f.id == itemId);
-          if (allIndex != -1) _allUserFolders[allIndex] = _allUserFolders[allIndex].copyWith(name: newName);
-        }
-      });
+      
       _showSnackbar('Successfully renamed!');
     } catch (e) {
       _showSnackbar('Failed to rename: ${e.toString()}', success: false);
@@ -491,13 +563,16 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   Future<void> _performFileDelete(FileData file) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) throw Exception('User not logged in.');
-    final userDoc = await _firestore.collection('users').doc(user.email).get();
-    final uid = userDoc.data()?['uid'];
+    
+    final uid = _userUid;
     if (uid == null) throw Exception("UID not found.");
 
     final userRef = _firestore.collection('users').doc(user.email);
     final fileRefPath = 'users/${user.email}/files/${file.id}';
-    await userRef.update({
+    
+    final batch = _firestore.batch();
+    
+    batch.update(userRef, {
       'favorites': FieldValue.arrayRemove([fileRefPath]),
       'recentlyAccessed': FieldValue.arrayRemove([fileRefPath]),
     });
@@ -516,11 +591,16 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
         }
       }
     }
+    
     final filesCollection = _firestore.collection('users').doc(user.email).collection('files');
-    await filesCollection.doc(file.id).delete();
+    batch.delete(filesCollection.doc(file.id));
+    
+    await batch.commit();
+
     if (!_isSelectionMode) {
       await _logActivity('Deleted File', {'fileName': file.name, 'parentFolder': _currentFolderName});
     }
+    // The listener will automatically remove the item from the UI
   }
 
   Future<void> _deleteFile(FileData file) async {
@@ -530,7 +610,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       _showSnackbar('Deleting file...');
       await _performFileDelete(file);
       _showSnackbar('File deleted successfully!');
-      await _loadAllItems();
+      // Listener handles update
     } catch (e) {
       _showSnackbar('Failed to delete file: ${e.toString()}', success: false);
     }
@@ -539,11 +619,13 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   Future<void> _performFolderDelete(FolderData folder) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) throw Exception('User not logged in.');
-    final userDoc = await _firestore.collection('users').doc(user.email).get();
-    final uid = userDoc.data()?['uid'];
+    final uid = _userUid;
     if (uid == null) throw Exception("UID not found.");
+    
     final foldersCollection = _firestore.collection('users').doc(user.email).collection('folders');
     final filesCollection = _firestore.collection('users').doc(user.email).collection('files');
+    
+    // Recursive delete is still necessary here
     Future<void> deleteRecursively(String folderId) async {
       final filesSnapshot = await filesCollection.where('parentFolderId', isEqualTo: folderId).get();
       for (final fileDoc in filesSnapshot.docs) {
@@ -557,9 +639,11 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       await foldersCollection.doc(folderId).delete();
     }
     await deleteRecursively(folder.id);
+    
     if (!_isSelectionMode) {
       await _logActivity('Deleted Folder', {'folderName': folder.name});
     }
+    // The listener handles the UI update now
   }
 
   Future<void> _deleteFolder(FolderData folder) async {
@@ -569,7 +653,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       _showSnackbar('Deleting folder...');
       await _performFolderDelete(folder);
       _showSnackbar('Folder "${folder.name}" and all its contents deleted successfully!');
-      await _loadAllItems();
+      // Listener handles update
     } catch (e) {
       _showSnackbar('Failed to delete folder: ${e.toString()}', success: false);
     }
@@ -613,8 +697,8 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       setState(() {
         _selectedItems.clear();
         _isSelectionMode = false;
+        _isLoading = false; // Listener handles update
       });
-      await _loadAllItems();
     }
   }
 
@@ -651,6 +735,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   }
 
   void _openFolder(String folderId, String folderName) {
+    // Navigate to the new folder route
     context.push('/faculty_my_files/$folderId', extra: folderName);
   }
 
@@ -677,6 +762,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     if (_searchQuery.isNotEmpty) {
       final parentFolderId = item.parentFolderId;
       if (parentFolderId == null) return 'My Files';
+      // Use the list updated by the allFolders listener
       final parentFolder = _allUserFolders.where((f) => f.id == parentFolderId).firstOrNull;
       return parentFolder?.name ?? 'My Files';
     }
@@ -686,15 +772,17 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   List<dynamic> _getFilteredItems() {
     final lowerCaseQuery = _searchQuery.toLowerCase();
     List<dynamic> itemsToDisplay;
+    
     if (lowerCaseQuery.isNotEmpty) {
+      // Filter based on currently loaded items (which are only for the current folder if not searching)
       final filteredFolders = _allUserFolders.where((folder) => folder.name.toLowerCase().contains(lowerCaseQuery));
       final filteredFiles = _allUserFiles.where((file) => file.name.toLowerCase().contains(lowerCaseQuery));
       itemsToDisplay = [...filteredFolders, ...filteredFiles];
     } else {
-      final currentFolders = _allUserFolders.where((folder) => folder.parentFolderId == _currentFolderId);
-      final currentFiles = _allUserFiles.where((file) => file.parentFolderId == _currentFolderId);
-      itemsToDisplay = [...currentFolders, ...currentFiles];
+      // Use items loaded by the current folder listener
+      itemsToDisplay = [..._allUserFolders, ..._allUserFiles];
     }
+    
     if (_searchTab != 'All') {
       itemsToDisplay = itemsToDisplay.where((item) {
         if (_searchTab == 'Files') return item is FileData;
@@ -702,6 +790,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
         return false;
       }).toList();
     }
+    
     itemsToDisplay.sort((a, b) {
       if (a is FolderData && b is FileData) return -1;
       if (a is FileData && b is FolderData) return 1;
@@ -729,6 +818,65 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
           const SizedBox(height: 8),
           Text(label),
         ],
+      ),
+    );
+  }
+
+  // MODIFIED: _buildFolderPath now uses the list populated by the stream
+  Future<void> _buildFolderPath(String? folderId) async {
+    if (!mounted) return;
+    List<Map<String, String?>> path = [];
+    String? currentId = folderId;
+    while (currentId != null) {
+      final folder = _allUserFolders.where((f) => f.id == currentId).firstOrNull;
+      if (folder != null) {
+          path.insert(0, {'id': folder.id, 'name': folder.name});
+          currentId = folder.parentFolderId;
+      } else {
+          // Break if folder not found (either root or data is stale/missing)
+          break;
+      }
+    }
+    path.insert(0, {'id': null, 'name': 'My Files'});
+    setState(() {
+      _folderPath = path;
+    });
+  }
+
+  Widget _buildBreadcrumbs() {
+    if (_folderPath.isEmpty) return const SizedBox.shrink();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _folderPath.map((folder) {
+          final isLast = folder == _folderPath.last;
+          return Row(
+            children: [
+              InkWell(
+                onTap: isLast ? null : () {
+                  final folderId = folder['id'];
+                  if (folderId == null) {
+                    context.go('/faculty_my_files');
+                  } else {
+                     _openFolder(folderId, folder['name']!);
+                  }
+                },
+                child: Text(
+                  folder['name']!,
+                  style: TextStyle(
+                    color: isLast ? Colors.black : Colors.blue,
+                    fontWeight: isLast ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+              if (!isLast)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+                ),
+            ],
+          );
+        }).toList(),
       ),
     );
   }
@@ -803,18 +951,20 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       onWillPop: () async {
         if (_isSelectionMode) {
           _cancelSelection();
-          return false; 
+          return false; // Prevent page from popping
         }
         if (widget.folderId == null) {
-          context.go('/faculty_home');
-          return false; 
+          // This is the root "My Files" page, navigate to home instead of exiting.
+          context.go('/faculty_home'); 
+          return false; // Prevent default pop action (which would exit the app).
         }
-        return true; 
+        return true; // Allow default pop for sub-folders.
       },
       child: Scaffold(
         appBar: _isSelectionMode ? _buildSelectionAppBar() : _buildNormalAppBar(),
+        // MODIFIED: Use _refreshItems for force server fetch on pull
         body: RefreshIndicator(
-          onRefresh: _loadAllItems,
+          onRefresh: _refreshItems, 
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -824,68 +974,74 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
                 const SizedBox(height: 8),
                 _buildBreadcrumbs(),
                 const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: const InputDecoration(
-                        icon: Icon(Icons.search, color: Colors.grey),
-                        hintText: 'Search all files and folders',
-                        border: InputBorder.none),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: ['All', 'Files', 'Folders'].map((tab) {
-                    final isSelected = _searchTab == tab;
-                    return GestureDetector(
-                      onTap: () => setState(() => _searchTab = tab),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: isSelected ? Colors.blue : Colors.transparent, width: 2))),
-                        child: Text(tab, style: TextStyle(color: isSelected ? Colors.blue : Colors.grey, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 24),
-                if (_isLoading)
-                  const Center(child: Padding(padding: EdgeInsets.all(32.0), child: CircularProgressIndicator()))
-                else if (filteredItems.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                // The main content area: Shimmer or actual list
+                _isLoading
+                    ? const _FacultyMyFilesShimmer() // **MODIFIED: Show Shimmer**
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
-                          const SizedBox(height: 16),
-                          Text(
-                            _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
+                            child: TextField(
+                              controller: _searchController,
+                              decoration: const InputDecoration(
+                                  icon: Icon(Icons.search, color: Colors.grey),
+                                  hintText: 'Search all files and folders',
+                                  border: InputBorder.none),
+                            ),
                           ),
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: ['All', 'Files', 'Folders'].map((tab) {
+                              final isSelected = _searchTab == tab;
+                              return GestureDetector(
+                                onTap: () => setState(() => _searchTab = tab),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: isSelected ? Colors.blue : Colors.transparent, width: 2))),
+                                  child: Text(tab, style: TextStyle(color: isSelected ? Colors.blue : Colors.grey, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 24),
+                          if (filteredItems.isEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: filteredItems.length,
+                              itemBuilder: (context, index) {
+                                final item = filteredItems[index];
+                                if (item is FileData) {
+                                  return _buildFileTile(item, _getItemPath(item));
+                                } else if (item is FolderData) {
+                                  return _buildFolderTile(item, _getItemPath(item));
+                                }
+                                return const SizedBox.shrink();
+                              },
+                            ),
                         ],
                       ),
-                    ),
-                  )
-                else
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: filteredItems.length,
-                    itemBuilder: (context, index) {
-                      final item = filteredItems[index];
-                      if (item is FileData) {
-                        return _buildFileTile(item, _getItemPath(item));
-                      } else if (item is FolderData) {
-                        return _buildFolderTile(item, _getItemPath(item));
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  ),
               ],
             ),
           ),
@@ -1016,13 +1172,13 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
             TextButton(
+              child: const Text('Rename'),
               onPressed: () {
                 if (controller.text.trim().isNotEmpty) {
                   _renameItem(itemId, currentName, controller.text.trim(), type);
                   Navigator.of(context).pop();
                 }
               },
-              child: const Text('Rename'),
             ),
           ],
         );
@@ -1102,6 +1258,8 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     }
     final userRef = _firestore.collection('users').doc(user.email);
     final fileRef = 'users/${user.email}/files/${file.id}';
+    
+    // Single write operation; the listener handles UI update
     if (_favoriteFileIds.contains(file.id)) {
       await userRef.update({
         'favorites': FieldValue.arrayRemove([fileRef])
@@ -1117,65 +1275,6 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       _showSnackbar('Added to favorites');
       await _logActivity('Added to Favorites', {'fileName': file.name});
     }
-  }
-
-  Future<void> _buildFolderPath(String? folderId) async {
-    if (!mounted) return;
-    List<Map<String, String?>> path = [];
-    String? currentId = folderId;
-    while (currentId != null) {
-      final folder = _allUserFolders.firstWhere((f) => f.id == currentId, orElse: () {
-        return FolderData(id: '', name: '...', ownerId: '', createdAt: Timestamp.now());
-      });
-      if (folder.id.isNotEmpty) {
-          path.insert(0, {'id': folder.id, 'name': folder.name});
-          currentId = folder.parentFolderId;
-      } else {
-          break;
-      }
-    }
-    path.insert(0, {'id': null, 'name': 'My Files'});
-    setState(() {
-      _folderPath = path;
-    });
-  }
-
-  Widget _buildBreadcrumbs() {
-    if (_folderPath.isEmpty) return const SizedBox.shrink();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: _folderPath.map((folder) {
-          final isLast = folder == _folderPath.last;
-          return Row(
-            children: [
-              InkWell(
-                onTap: isLast ? null : () {
-                  final folderId = folder['id'];
-                  if (folderId == null) {
-                    context.go('/faculty_my_files');
-                  } else {
-                     _openFolder(folderId, folder['name']!);
-                  }
-                },
-                child: Text(
-                  folder['name']!,
-                  style: TextStyle(
-                    color: isLast ? Colors.black : Colors.blue,
-                    fontWeight: isLast ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-              ),
-              if (!isLast)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 4.0),
-                  child: Icon(Icons.chevron_right, size: 16, color: Colors.grey),
-                ),
-            ],
-          );
-        }).toList(),
-      ),
-    );
   }
 
   Future<void> _showAddLinkDialog() async {
@@ -1229,12 +1328,10 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
 
   Future<void> _addLink(String name, String url) async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    if (user == null || user.email == null || _userUid == null) return;
     try {
-      final userDoc = await _firestore.collection('users').doc(user.email).get();
-      final uid = userDoc.data()?['uid'];
-      if (uid == null) throw Exception("UID not found.");
-      final ownerName = userDoc.data()?['name'] ?? 'Unknown';
+      final uid = _userUid!;
+      final ownerName = userName ?? 'Unknown';
 
       final filesCollection = _firestore.collection('users').doc(user.email).collection('files');
       final newFileRef = filesCollection.doc();
@@ -1245,11 +1342,10 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
         parentFolderId: _currentFolderId, sharedWith: [], uploadedAt: Timestamp.now(), size: 0, type: 'link',
       );
 
+      // Single write operation; the listener handles UI update
       await newFileRef.set(newLinkData.toMap());
       await _logActivity('Added Link', {'linkName': name, 'url': url});
-      if (mounted) {
-        setState(() => _allUserFiles.add(newLinkData));
-      }
+      
       _showSnackbar('Link "$name" added successfully!');
     } catch (e) {
       _showSnackbar('Failed to add link: $e', success: false);
@@ -1279,7 +1375,9 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
     final fileRefPath = 'users/${user.email}/files/${file.id}';
 
     try {
+       // Transaction ensures the read and write are atomic (consistent)
        await _firestore.runTransaction((transaction) async {
+        // Read the user document (incurs 1 Read)
         final snapshot = await transaction.get(userRef);
         final data = snapshot.data();
         
@@ -1295,10 +1393,123 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
           recentlyAccessed = recentlyAccessed.sublist(0, 10);
         }
         
+        // Write the update (incurs 1 Write)
         transaction.update(userRef, {'recentlyAccessed': recentlyAccessed});
       });
     } catch(e) {
       print("Error updating recently accessed: $e");
     }
+  }
+}
+
+// ----------------------------------------------------------------------
+// NEW SHIMMER EFFECT WIDGET
+// ----------------------------------------------------------------------
+
+class _FacultyMyFilesShimmer extends StatelessWidget {
+  const _FacultyMyFilesShimmer();
+
+  Widget _buildBreadcrumbPlaceholder() {
+    return Container(
+      height: 20,
+      width: double.infinity,
+      child: Row(
+        children: [
+          Container(width: 60, height: 14, color: Colors.white),
+          const SizedBox(width: 8),
+          Container(width: 16, height: 16, color: Colors.white),
+          const SizedBox(width: 8),
+          Container(width: 80, height: 14, color: Colors.white),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchPlaceholder() {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      margin: const EdgeInsets.only(bottom: 16),
+    );
+  }
+
+  Widget _buildTabPlaceholder() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        Container(width: 40, height: 16, color: Colors.white),
+        Container(width: 40, height: 16, color: Colors.white),
+        Container(width: 40, height: 16, color: Colors.white),
+      ],
+    );
+  }
+
+  Widget _buildItemTilePlaceholder() {
+    return ListTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      title: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          height: 14,
+          width: 150,
+          color: Colors.white,
+          margin: const EdgeInsets.only(bottom: 4),
+        ),
+      ),
+      subtitle: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          height: 12,
+          width: 100,
+          color: Colors.white,
+        ),
+      ),
+      trailing: Container(
+        width: 24,
+        height: 24,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          _buildBreadcrumbPlaceholder(),
+          const SizedBox(height: 8),
+          _buildSearchPlaceholder(),
+          _buildTabPlaceholder(),
+          const SizedBox(height: 24),
+          // List of items placeholder
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+          _buildItemTilePlaceholder(),
+        ],
+      ),
+    );
   }
 }

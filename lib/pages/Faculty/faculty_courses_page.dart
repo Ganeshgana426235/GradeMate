@@ -12,6 +12,8 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:grademate/models/file_models.dart';
+import 'package:shimmer/shimmer.dart'; // **NEW: Import Shimmer**
+
 
 class FacultyCoursesPage extends StatefulWidget {
   const FacultyCoursesPage({super.key});
@@ -47,6 +49,14 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   // State for multi-select functionality
   bool _isSelectionMode = false;
   final Set<String> _selectedItemIds = {};
+
+  // **NEW**: Predefined list of years for creation
+  final List<String> _availableYears = [
+    '1ST YEAR',
+    '2ND YEAR',
+    '3RD YEAR',
+    '4TH YEAR'
+  ];
 
   @override
   void initState() {
@@ -89,6 +99,52 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           .add(activityData);
     } catch (e) {
       print("Error logging activity: $e");
+    }
+  }
+
+  // **NEW FUNCTION**: Creates the notification trigger document
+  Future<void> _createNotificationTrigger(String type, String title) async {
+    if (collegeId == null ||
+        currentBranch == null ||
+        currentRegulation == null ||
+        currentYear == null ||
+        currentSubject == null) {
+      print("Notification Trigger failed: Missing required course context.");
+      // This is the error detected by the Cloud Function, so we log it here too
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Notification trigger failed: Missing branch, regulation, or year context.'),
+            backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    try {
+      await _firestore
+          .collection('colleges')
+          .doc(collegeId)
+          .collection('notifications_queue')
+          .add({
+        'type': type, // e.g., 'file' or 'link'
+        'title': title, // name of the file/link
+        'collegeId': collegeId,
+        'branch': currentBranch,
+        'regulation': currentRegulation,
+        'year': currentYear,
+        'subject': currentSubject,
+        'uploaderEmail': _auth.currentUser?.email,
+        'uploaderName': userName ?? 'Faculty',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      print("FCM: Notification trigger created for serverless function.");
+    } catch (e) {
+      print("Error creating notification trigger: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Error creating notification trigger: $e'),
+            backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -472,83 +528,118 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
+  // **MODIFIED**: To show predefined year options
   Future<void> _showAddYearDialog() async {
-    final yearController = TextEditingController();
+    String? selectedYear;
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add Year to "$currentRegulation"'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'This will add the new year to the "$currentRegulation" regulation for ALL branches.',
-              style: TextStyle(color: Colors.grey[600]),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Add Year'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This will add the selected year to ALL regulations across ALL branches.',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: selectedYear,
+                  decoration: const InputDecoration(
+                    labelText: 'Select Year',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _availableYears.map((String year) {
+                    return DropdownMenuItem<String>(
+                      value: year,
+                      child: Text(year),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setDialogState(() {
+                      selectedYear = newValue;
+                    });
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: yearController,
-              decoration: const InputDecoration(
-                labelText: 'Year Name (e.g., 1st Year)',
-                border: OutlineInputBorder(),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: selectedYear != null
+                    ? () async {
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (context) =>
+                              const Center(child: CircularProgressIndicator()),
+                        );
+                        // **MODIFIED**: Pass the selected year directly
+                        await _addYearToAllRegulations(selectedYear!);
+                        Navigator.pop(context); // Pop loading indicator
+                        Navigator.pop(context); // Pop add dialog
+                      }
+                    : null,
+                child: const Text('Add to All'),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (yearController.text.isNotEmpty) {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) =>
-                      const Center(child: CircularProgressIndicator()),
-                );
-                // **MODIFIED**: Trim and convert to uppercase
-                await _addYearToAllBranches(
-                    yearController.text.trim().toUpperCase());
-                Navigator.pop(context); // Pop loading indicator
-                Navigator.pop(context); // Pop add dialog
-              }
-            },
-            child: const Text('Add to All'),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
 
-  Future<void> _addYearToAllBranches(String yearName) async {
-    if (collegeId == null || currentRegulation == null) return;
+  // **MODIFIED**: To add year to ALL regulations under ALL branches
+  Future<void> _addYearToAllRegulations(String yearName) async {
+    if (collegeId == null) return;
     try {
       final branchesSnapshot = await _firestore
           .collection('colleges')
           .doc(collegeId)
           .collection('branches')
           .get();
-      final allBranchIds = branchesSnapshot.docs.map((doc) => doc.id).toList();
+      final allBranches = branchesSnapshot.docs;
 
-      if (allBranchIds.isEmpty) {
+      if (allBranches.isEmpty) {
         throw Exception("No branches exist to add years to.");
       }
 
+      final collegeRegulationsSnapshot = await _firestore
+          .collection('colleges')
+          .doc(collegeId)
+          .get();
+
+      final allRegulationNames = List<String>.from(
+          collegeRegulationsSnapshot.data()?['regulations'] ?? []);
+
+      if (allRegulationNames.isEmpty) {
+         throw Exception("No regulations exist to add years to. Please add a regulation first.");
+      }
+
+
       final batch = _firestore.batch();
 
-      for (final branchId in allBranchIds) {
-        final yearDocRef = _firestore
-            .collection('colleges')
-            .doc(collegeId)
-            .collection('branches')
-            .doc(branchId)
-            .collection('regulations')
-            .doc(currentRegulation)
-            .collection('years')
-            .doc(yearName);
-        batch.set(yearDocRef, {'name': yearName});
+      for (final branchDoc in allBranches) {
+        final branchId = branchDoc.id;
+
+        for (final regName in allRegulationNames) {
+          final yearDocRef = _firestore
+              .collection('colleges')
+              .doc(collegeId)
+              .collection('branches')
+              .doc(branchId)
+              .collection('regulations')
+              .doc(regName)
+              .collection('years')
+              .doc(yearName); // Year name is the document ID (e.g., '1ST YEAR')
+          
+          batch.set(yearDocRef, {'name': yearName});
+        }
       }
 
       final collegeDocRef = _firestore.collection('colleges').doc(collegeId);
@@ -558,13 +649,12 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       await batch.commit();
       _logActivity('Created Year', {
         'yearName': yearName,
-        'regulation': currentRegulation,
-        'scope': 'All Branches'
+        'scope': 'All Branches, All Regulations'
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Year added to all branches successfully'),
+            content: Text('Year added to all branches and regulations successfully'),
             backgroundColor: Colors.green),
       );
     } catch (e) {
@@ -598,6 +688,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             onPressed: () async {
               if (subjectController.text.isNotEmpty) {
                 // Subjects can be mixed case, so just trim.
+                // This function correctly targets only the CURRENT path:
+                // .../branches/currentBranch/regulations/currentRegulation/years/currentYear/subjects/...
                 await _addSubject(subjectController.text.trim());
                 Navigator.pop(context);
               }
@@ -646,6 +738,14 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   }
 
   Future<void> _uploadFile() async {
+    // CRITICAL: Ensure we are in the correct subject view before uploading
+    if (currentSubject == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please navigate into a subject folder first.')),
+      );
+      return;
+    }
+
     try {
       FilePickerResult? result =
           await FilePicker.platform.pickFiles(type: FileType.any);
@@ -683,6 +783,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
 
         _logActivity('Uploaded File', {'fileName': fileName, 'path': filePath});
         await _showCompletionNotification('Upload Complete', fileName, 1);
+        
+        // **CRITICAL FIX CALL**
+        await _createNotificationTrigger('file', fileName); 
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('File uploaded successfully')),
@@ -729,6 +832,14 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   }
 
   Future<void> _addLink(String url) async {
+    // CRITICAL: Ensure we are in the correct subject view before adding link
+    if (currentSubject == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please navigate into a subject folder first.')),
+      );
+      return;
+    }
+    
     try {
       await _getFilesCollectionRef().add({
         'type': 'link',
@@ -741,6 +852,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         'timestamp': FieldValue.serverTimestamp(),
       });
       _logActivity('Added Link', {'url': url, 'subject': currentSubject});
+      
+      // **CRITICAL FIX CALL**
+      await _createNotificationTrigger('link', url);
+      
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error adding link: $e')),
@@ -1771,7 +1886,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               } else if (currentYear != null) {
                 _showAddSubjectDialog();
               } else if (currentRegulation != null) {
-                _showAddYearDialog();
+                _showAddYearDialog(); // **MODIFIED**: Year dialog with options
               } else if (currentBranch != null) {
                 _showAddRegulationDialog();
               } else {
@@ -1823,8 +1938,44 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.black),
+            onPressed: _navigateBack,
+          ),
+          title: Text(
+            breadcrumbs.last,
+            style: const TextStyle(
+              color: Colors.black,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          centerTitle: true,
+        ),
+        body: Column(
+          children: [
+            _buildBreadcrumbs(),
+            // Search field placeholder
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Expanded(
+              child: _FacultyCoursesShimmer(), // **NEW: Shimmer View**
+            ),
+          ],
+        ),
       );
     }
 
@@ -1891,3 +2042,86 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   }
 }
 
+// ----------------------------------------------------------------------
+// NEW SHIMMER EFFECT WIDGET
+// ----------------------------------------------------------------------
+
+class _FacultyCoursesShimmer extends StatelessWidget {
+  const _FacultyCoursesShimmer();
+
+  Widget _buildPlaceholderBox({double width = double.infinity, double height = 16, double radius = 8}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+
+  Widget _buildItemTilePlaceholder({bool withSubtitle = true}) {
+    return ListTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      title: Align(
+        alignment: Alignment.centerLeft,
+        child: _buildPlaceholderBox(
+          height: 14,
+          width: 180,
+          radius: 6,
+        ),
+      ),
+      subtitle: withSubtitle
+          ? Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: _buildPlaceholderBox(
+                  height: 12,
+                  width: 120,
+                  radius: 6,
+                ),
+              ),
+            )
+          : null,
+      trailing: Container(
+        width: 24,
+        height: 24,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        itemCount: 10,
+        itemBuilder: (context, index) {
+          // Add a divider between list items to better simulate the list structure
+          return Column(
+            children: [
+              _buildItemTilePlaceholder(
+                withSubtitle: index % 2 == 0, // Simulate subtitle sometimes
+              ),
+              const Divider(height: 1),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}

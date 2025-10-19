@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive_flutter/hive_flutter.dart'; // [ADDED]
+import 'package:firebase_messaging/firebase_messaging.dart'; // [NEW IMPORT]
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -32,6 +33,25 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  // [NEW FUNCTION] Function to fetch and update the FCM token
+  Future<void> _updateFCMToken(String userEmail, String role) async {
+    if (role != 'Student') return; // Only save token for students
+
+    try {
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userEmail)
+            .update({'fcmToken': fcmToken});
+        print('FCM Token successfully saved for $userEmail.');
+      }
+    } catch (e) {
+      print('Error updating FCM token: $e');
+      // Non-critical error, do not block login
+    }
+  }
+
   Future<void> _handleLogin() async {
     setState(() {
       _isLoading = true;
@@ -46,17 +66,21 @@ class _LoginPageState extends State<LoginPage> {
       final user = userCredential.user;
       if (user != null && user.emailVerified) {
         // Fetch user role from Firestore and navigate accordingly
-        // CORRECTED: Use user.email! as the document ID to match registration logic
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.email!).get();
         if (userDoc.exists) {
           final role = userDoc.data()?['role'] as String?;
           final uid = user.uid; // Get UID
+          final email = user.email!;
 
           if (role != null) {
+            
+            // [NEW LOGIC] Save FCM Token immediately after successful login
+            await _updateFCMToken(email, role); 
+            
             // [START HIVE STORAGE LOGIC] Store user details in Hive for persistent login
             final userBox = Hive.box<String>('userBox');
             userBox.put('uid', uid);
-            userBox.put('email', user.email!);
+            userBox.put('email', email);
             userBox.put('role', role); // Store the role to guide redirection
             // [END HIVE STORAGE LOGIC]
 

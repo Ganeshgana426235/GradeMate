@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shimmer/shimmer.dart'; // **NEW: Import Shimmer**
 
 class FacultyProfilePage extends StatefulWidget {
   const FacultyProfilePage({super.key});
@@ -181,9 +182,15 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
       });
 
       // Delete the old image from Firebase Storage
-      final ref =
-          _storage.ref().child('profile_images').child('${user.uid}.jpg');
-      await ref.delete();
+      try {
+        final ref =
+            _storage.ref().child('profile_images').child('${user.uid}.jpg');
+        await ref.delete();
+      } catch (e) {
+        // Suppress error if file doesn't exist in storage
+        debugPrint('Failed to delete image from storage (possibly already deleted or non-existent): $e');
+      }
+
 
       if (mounted) {
         setState(() {
@@ -234,7 +241,7 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const _FacultyProfilePageShimmer() // **MODIFIED: Show Shimmer**
           : SingleChildScrollView(
               child: Column(
                 children: [
@@ -404,6 +411,148 @@ class _FacultyProfilePageState extends State<FacultyProfilePage> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ----------------------------------------------------------------------
+// NEW SHIMMER EFFECT WIDGET
+// ----------------------------------------------------------------------
+
+class _FacultyProfilePageShimmer extends StatelessWidget {
+  const _FacultyProfilePageShimmer();
+
+  Widget _buildDetailPlaceholder() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12.0),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            color: Colors.white,
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 14,
+                width: 70,
+                color: Colors.white,
+                margin: const EdgeInsets.only(bottom: 4),
+              ),
+              Container(
+                height: 16,
+                width: 180,
+                color: Colors.white,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Header Placeholder (Blue Background)
+            Container(
+              height: 240,
+              decoration: BoxDecoration(
+                color: Colors.blue.shade700,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(30),
+                  bottomRight: Radius.circular(30),
+                ),
+              ),
+            ),
+            
+            // Profile Image Placeholder (positioned below the header)
+            Transform.translate(
+              offset: const Offset(0, -70),
+              child: Column(
+                children: [
+                  // Circle Avatar Placeholder
+                  Container(
+                    width: 130,
+                    height: 130,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 5),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Name Placeholder
+                  Container(
+                    height: 24,
+                    width: 250,
+                    color: Colors.white,
+                    margin: const EdgeInsets.only(top: 16),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Designation/Department Placeholder
+                  Container(
+                    height: 16,
+                    width: 200,
+                    color: Colors.white,
+                  ),
+                ],
+              ),
+            ),
+
+            // Profile Details Card Placeholder
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24.0, 0, 24.0, 20.0),
+              child: Card(
+                elevation: 2,
+                shadowColor: Colors.grey.shade50,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15.0),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+                  child: Column(
+                    children: [
+                      // 4 detail fields + 3 dividers
+                      _buildDetailPlaceholder(),
+                      const Divider(height: 0),
+                      _buildDetailPlaceholder(),
+                      const Divider(height: 0),
+                      _buildDetailPlaceholder(),
+                      const Divider(height: 0),
+                      _buildDetailPlaceholder(),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Logout Button Placeholder
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
       ),
     );
   }
