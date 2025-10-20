@@ -43,6 +43,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:firebase_messaging/firebase_messaging.dart'; // [NEW IMPORT]
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // [NEW IMPORT]
+import 'package:grademate/pages/Student/job_updates_page.dart';
 
 
 // [NEW FCM BACKGROUND HANDLER]
@@ -85,6 +86,10 @@ final _router = GoRouter(
       path: '/notifications',
       builder: (context, state) => const NotificationsPage(),
     ),
+    GoRoute(
+    path: '/job_updates', // The new route path
+    builder: (context, state) => const JobUpdatesPage(),
+  ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         return StudentShell(navigationShell: navigationShell);

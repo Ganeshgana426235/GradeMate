@@ -785,24 +785,23 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
   // UI COMPONENT BUILDERS
   // ----------------------------------------------------------------------
   
-  // NEW: Builds the entire top section with profile image and stats
+  // UPDATED: Builds the entire top section with profile image and background
   Widget _buildHeaderSection(BuildContext context, bool hasValidImageUrl) {
+    // Define the size for the inner CircleAvatar (image) and the outer background
+    const double imageRadius = 55; // Increased size
+    const double backgroundRadius = imageRadius + 15; // Outer circle size
+    const Color primaryBlue = Color(0xFF6A67FE);
+    const Color darkBlueBackground = Color(0xFF1B4370); // Darker blue for the entire background container
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.only(top: 40, bottom: 20, left: 16, right: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.only(
+      decoration: const BoxDecoration(
+        color: primaryBlue, // Applying the primary blue color to the entire top section
+        borderRadius: BorderRadius.only(
           bottomLeft: Radius.circular(25),
           bottomRight: Radius.circular(25),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
       child: Column(
         children: [
@@ -814,31 +813,45 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
             ],
           ),
           
-          // Profile Picture
+          // Profile Picture with Background and increased size
           GestureDetector(
             onTap: _showImageSourceActionSheet,
             child: Stack(
+              alignment: Alignment.center, // Center the stack contents
               children: [
+                // 1. Outer Circular Background (Deep blue to give a patterned effect)
+                // We use a dark color here to simulate the circuit board pattern on a bright blue background.
+                Container(
+                  width: backgroundRadius * 2, // Diameter
+                  height: backgroundRadius * 2, // Diameter
+                  decoration: BoxDecoration(
+                    color: darkBlueBackground, // Darker blue for the background circle
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                // 2. Inner CircleAvatar for the actual image
                 CircleAvatar(
-                  radius: 45,
-                  backgroundColor: const Color(0xFF6A67FE).withOpacity(0.1),
+                  radius: imageRadius, // Increased radius
+                  backgroundColor: Colors.white, // Inner background color
                   child: CircleAvatar(
-                    radius: 42,
+                    radius: imageRadius - 2, // Slight border effect
                     backgroundImage: hasValidImageUrl
                         ? NetworkImage(_profileImageUrl!)
                         : null,
+                    // Fallback Icon is now white to contrast with dark blue circle
                     child: !hasValidImageUrl
-                        ? Icon(Icons.person, size: 50, color: Colors.grey.shade600)
+                        ? Icon(Icons.person, size: imageRadius, color: Colors.white.withOpacity(0.8))
                         : null,
                   ),
                 ),
+                // 3. Edit Icon
                 Positioned(
                   bottom: 0,
-                  right: 0,
+                  right: (backgroundRadius - imageRadius) + 4, // Position relative to the inner circle
                   child: Container(
                     padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF6A67FE),
+                      color: primaryBlue, // Primary Blue for the camera icon
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
@@ -851,15 +864,15 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
           
           const SizedBox(height: 12),
           
-          // Name and Details
+          // Name and Details (Text colors changed to white for contrast)
           Text(
             _name ?? 'Alex Johnson',
-            style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold),
+            style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
           ),
           const SizedBox(height: 4),
           Text(
             '${_year ?? '3rd Year'} • ${_branch ?? 'Computer Science'}',
-            style: GoogleFonts.inter(fontSize: 14, color: Colors.grey.shade600),
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white.withOpacity(0.8)),
           ),
           
           const SizedBox(height: 16),
@@ -868,9 +881,9 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildStatusBadge(Icons.check_circle_outline, 'Verified', const Color(0xFF6A67FE)),
+              _buildStatusBadge(Icons.check_circle_outline, 'Verified', Colors.white), // Use white for badges against blue background
               const SizedBox(width: 12),
-              _buildStatusBadge(Icons.calendar_today_outlined, 'Regulation ${_regulation ?? 'R21'}', Colors.grey.shade500),
+              _buildStatusBadge(Icons.calendar_today_outlined, 'Regulation ${_regulation ?? 'R21'}', Colors.white.withOpacity(0.8)),
             ],
           ),
           
@@ -884,8 +897,8 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
               icon: const Icon(Icons.edit, size: 20),
               label: const Text('Edit profile', style: TextStyle(fontSize: 15)),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6A67FE),
-                foregroundColor: Colors.white,
+                backgroundColor: Colors.white, // White button for contrast
+                foregroundColor: primaryBlue, // Blue text on white button
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               ),
@@ -896,12 +909,14 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
     );
   }
   
+  // Minor adjustment to badge building function for better contrast on the blue background
   Widget _buildStatusBadge(IconData icon, String text, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withOpacity(0.15), // Slightly more opaque white background for badge
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.4)), // Light border
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
