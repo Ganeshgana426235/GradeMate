@@ -66,6 +66,9 @@ flutter:
   uses-material-design: true
   assets:
       - .env
+     
+      
+      - lib/pages/Authentication/login_image.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

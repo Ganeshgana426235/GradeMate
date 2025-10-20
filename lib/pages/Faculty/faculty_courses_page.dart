@@ -6,14 +6,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data'; 
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:grademate/models/file_models.dart';
-import 'package:shimmer/shimmer.dart'; // **NEW: Import Shimmer**
+import 'package:shimmer/shimmer.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart'; // NEW: Added for camera functionality
 
+// Primary accent color for consistency
+const Color _kPrimaryColor = Color(0xFF6A67FE);
+const Color _kDarkBlueBackground = Color(0xFF1B4370);
 
 class FacultyCoursesPage extends StatefulWidget {
   const FacultyCoursesPage({super.key});
@@ -26,6 +32,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final ImagePicker _picker = ImagePicker(); // NEW: Image picker instance
+  
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
   String? collegeId;
@@ -33,7 +41,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   String? userName;
   bool isLoading = true;
 
-  // **NEW**: To track user's favorite files
   List<String> _favoriteFilePaths = [];
 
   // Navigation state
@@ -50,7 +57,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   bool _isSelectionMode = false;
   final Set<String> _selectedItemIds = {};
 
-  // **NEW**: Predefined list of years for creation
   final List<String> _availableYears = [
     '1ST YEAR',
     '2ND YEAR',
@@ -102,15 +108,14 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  // **NEW FUNCTION**: Creates the notification trigger document
-  Future<void> _createNotificationTrigger(String type, String title) async {
+  // UPDATED: Centralized method for triggering notifications with new 'type'
+  Future<void> _createNotificationTrigger(String type, String title, {String? body}) async {
     if (collegeId == null ||
         currentBranch == null ||
         currentRegulation == null ||
         currentYear == null ||
         currentSubject == null) {
       print("Notification Trigger failed: Missing required course context.");
-      // This is the error detected by the Cloud Function, so we log it here too
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -126,8 +131,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           .doc(collegeId)
           .collection('notifications_queue')
           .add({
-        'type': type, // e.g., 'file' or 'link'
-        'title': title, // name of the file/link
+        'type': type, // 'file', 'link', or 'REMINDER'
+        'title': title, // file name or reminder title
+        'body': body, // reminder body (only for REMINDER type)
         'collegeId': collegeId,
         'branch': currentBranch,
         'regulation': currentRegulation,
@@ -137,7 +143,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         'uploaderName': userName ?? 'Faculty',
         'timestamp': FieldValue.serverTimestamp(),
       });
-      print("FCM: Notification trigger created for serverless function.");
+      print("FCM: Notification trigger created for serverless function. Type: $type");
     } catch (e) {
       print("Error creating notification trigger: $e");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -209,7 +215,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               collegeId = data['collegeId'];
               userRole = data['role'];
               userName = data['name'];
-              // **NEW**: Load favorite paths
               _favoriteFilePaths =
                   List<String>.from(data['favorites'] ?? []);
               isLoading = false;
@@ -233,7 +238,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  // **NEW**: Adds a file's path to the user's recently accessed list.
   Future<void> _addToRecentlyAccessed(DocumentSnapshot doc) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) return;
@@ -250,11 +254,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             ? List<String>.from(data!['recentlyAccessed'])
             : [];
 
-        // Remove if it exists, then add to the front
         recentlyAccessed.remove(fileRefPath);
         recentlyAccessed.insert(0, fileRefPath);
 
-        // Keep the list at a reasonable size (e.g., 10 items)
         if (recentlyAccessed.length > 10) {
           recentlyAccessed = recentlyAccessed.sublist(0, 10);
         }
@@ -266,7 +268,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  // **NEW**: Adds or removes a file's path from the user's favorites list.
   Future<void> _toggleFavorite(DocumentSnapshot doc) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
@@ -387,7 +388,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             onPressed: () async {
               if (shortNameController.text.isNotEmpty &&
                   fullNameController.text.isNotEmpty) {
-                // **MODIFIED**: Trim and convert to uppercase
                 await _addBranch(
                   shortNameController.text.trim().toUpperCase(),
                   fullNameController.text.trim(),
@@ -464,7 +464,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
-                // **MODIFIED**: Trim and convert to uppercase
                 await _addRegulationToAllBranches(
                     regulationController.text.trim().toUpperCase());
                 Navigator.pop(context); // Pop loading indicator
@@ -493,14 +492,27 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         throw Exception("No branches exist to add regulations to.");
       }
 
+      final collegeRegulationsSnapshot = await _firestore
+          .collection('colleges')
+          .doc(collegeId)
+          .get();
+
+      final allRegulationNames = List<String>.from(
+          collegeRegulationsSnapshot.data()?['regulations'] ?? []);
+
+      if (allRegulationNames.isEmpty) {
+         throw Exception("No regulations exist to add years to. Please add a regulation first.");
+      }
+
+
       final batch = _firestore.batch();
 
-      for (final branchId in allBranchIds) {
+      for (final branchDoc in allBranchIds) {
         final regDocRef = _firestore
             .collection('colleges')
             .doc(collegeId)
             .collection('branches')
-            .doc(branchId)
+            .doc(branchDoc)
             .collection('regulations')
             .doc(regulationName);
         batch.set(regDocRef, {'name': regulationName});
@@ -528,7 +540,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
-  // **MODIFIED**: To show predefined year options
   Future<void> _showAddYearDialog() async {
     String? selectedYear;
     return showDialog(
@@ -579,8 +590,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                           builder: (context) =>
                               const Center(child: CircularProgressIndicator()),
                         );
-                        // **MODIFIED**: Pass the selected year directly
-                        await _addYearToAllRegulations(selectedYear!);
+                        _addYearToAllRegulations(selectedYear!);
                         Navigator.pop(context); // Pop loading indicator
                         Navigator.pop(context); // Pop add dialog
                       }
@@ -594,7 +604,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     );
   }
 
-  // **MODIFIED**: To add year to ALL regulations under ALL branches
   Future<void> _addYearToAllRegulations(String yearName) async {
     if (collegeId == null) return;
     try {
@@ -636,7 +645,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               .collection('regulations')
               .doc(regName)
               .collection('years')
-              .doc(yearName); // Year name is the document ID (e.g., '1ST YEAR')
+              .doc(yearName);
           
           batch.set(yearDocRef, {'name': yearName});
         }
@@ -687,9 +696,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           ElevatedButton(
             onPressed: () async {
               if (subjectController.text.isNotEmpty) {
-                // Subjects can be mixed case, so just trim.
-                // This function correctly targets only the CURRENT path:
-                // .../branches/currentBranch/regulations/currentRegulation/years/currentYear/subjects/...
                 await _addSubject(subjectController.text.trim());
                 Navigator.pop(context);
               }
@@ -738,7 +744,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   }
 
   Future<void> _uploadFile() async {
-    // CRITICAL: Ensure we are in the correct subject view before uploading
     if (currentSubject == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please navigate into a subject folder first.')),
@@ -762,7 +767,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
 
         uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
           final progress =
-              (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt();
+              (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt(); 
           _showProgressNotification('Uploading', fileName, progress, 1);
         });
 
@@ -784,8 +789,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         _logActivity('Uploaded File', {'fileName': fileName, 'path': filePath});
         await _showCompletionNotification('Upload Complete', fileName, 1);
         
-        // **CRITICAL FIX CALL**
-        await _createNotificationTrigger('file', fileName); 
+        await _createNotificationTrigger('file', fileName); // Triggers NEW MATERIAL notification
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('File uploaded successfully')),
@@ -801,18 +805,126 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
+  // NEW METHOD: Handle image capture and upload
+  Future<void> _uploadImageFromCamera(String fileName) async {
+    if (currentSubject == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please navigate into a subject folder first.')),
+      );
+      return;
+    }
+
+    try {
+      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+      
+      if (photo == null) return;
+      
+      File file = File(photo.path);
+      String fullFileName = '$fileName.jpg'; // Force .jpg extension
+      int fileSize = await file.length();
+
+      String filePath =
+          'courses/$collegeId/$currentBranch/$currentRegulation/$currentYear/$currentSubject/$fullFileName';
+      final uploadTask = _storage.ref(filePath).putFile(file);
+
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        final progress = (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt();
+        _showProgressNotification('Uploading', fullFileName, progress, 1);
+      });
+
+      final snapshot = await uploadTask.whenComplete(() => {});
+      final downloadURL = await snapshot.ref.getDownloadURL();
+
+      await _getFilesCollectionRef().add({
+        'type': 'jpg',
+        'fileName': fullFileName,
+        'fileURL': downloadURL,
+        'size': fileSize,
+        'ownerName': userName ?? 'Unknown',
+        'ownerEmail': _auth.currentUser?.email,
+        'sharedWith': ['Students', 'Faculty'],
+        'uploadedBy': _auth.currentUser?.email,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      _logActivity('Uploaded Image', {'fileName': fullFileName, 'path': filePath});
+      await _showCompletionNotification('Upload Complete', fullFileName, 1);
+      
+      await _createNotificationTrigger('image', fullFileName); 
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image uploaded successfully')),
+      );
+
+    } catch (e) {
+      await flutterLocalNotificationsPlugin.cancel(1);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to upload image: $e')),
+        );
+      }
+    }
+  }
+
+  // NEW METHOD: Dialog to get filename before opening camera
+  Future<void> _showCameraUploadDialog() async {
+    final TextEditingController nameController = TextEditingController();
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Name Your Photo'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(
+            labelText: 'File Name (e.g., Class Notes 1)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (nameController.text.trim().isNotEmpty) {
+                Navigator.pop(context); // Close dialog
+                _uploadImageFromCamera(nameController.text.trim());
+              }
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showAddLinkDialog() async {
     final linkController = TextEditingController();
+    final nameController = TextEditingController(); // Added name controller
     return showDialog(
         context: context,
         builder: (context) => AlertDialog(
               title: const Text('Add a Link'),
-              content: TextField(
-                controller: linkController,
-                decoration: const InputDecoration(
-                  labelText: 'Paste URL here',
-                  border: OutlineInputBorder(),
-                ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Link Name (e.g., Official Syllabus)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: linkController,
+                    decoration: const InputDecoration(
+                      labelText: 'Paste URL here',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
               actions: [
                 TextButton(
@@ -820,8 +932,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                     child: const Text('Cancel')),
                 ElevatedButton(
                   onPressed: () async {
-                    if (linkController.text.isNotEmpty) {
-                      await _addLink(linkController.text.trim());
+                    if (linkController.text.isNotEmpty && nameController.text.isNotEmpty) {
+                      await _addLink(nameController.text.trim(), linkController.text.trim());
                       Navigator.pop(context);
                     }
                   },
@@ -831,8 +943,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             ));
   }
 
-  Future<void> _addLink(String url) async {
-    // CRITICAL: Ensure we are in the correct subject view before adding link
+  Future<void> _addLink(String title, String url) async {
     if (currentSubject == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please navigate into a subject folder first.')),
@@ -844,17 +955,16 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       await _getFilesCollectionRef().add({
         'type': 'link',
         'url': url,
-        'title': url,
+        'title': title,
         'ownerName': userName ?? 'Unknown',
         'ownerEmail': _auth.currentUser?.email,
         'sharedWith': ['Students', 'Faculty'],
         'uploadedBy': _auth.currentUser?.email,
         'timestamp': FieldValue.serverTimestamp(),
       });
-      _logActivity('Added Link', {'url': url, 'subject': currentSubject});
+      _logActivity('Added Link', {'title': title, 'url': url, 'subject': currentSubject});
       
-      // **CRITICAL FIX CALL**
-      await _createNotificationTrigger('link', url);
+      await _createNotificationTrigger('link', title); // Triggers NEW MATERIAL notification
       
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -862,6 +972,91 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       );
     }
   }
+  
+  // NEW METHOD: Shows the dialog for faculty to send a reminder
+  Future<void> _showSendReminderDialog(String fileName) async {
+    final titleController = TextEditingController(text: "Reminder for '$fileName'");
+    final bodyController = TextEditingController(text: "Please review the file '$fileName' before the upcoming test/assignment.");
+
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send Course Reminder'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'To: Students of $currentBranch, $currentRegulation, $currentYear (Approximate: All students matching course context)',
+              style: GoogleFonts.inter(color: Colors.grey[700], fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: 'Notification Title (e.g., Test Preparation)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: bodyController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Notification Body (Message)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (titleController.text.isNotEmpty && bodyController.text.isNotEmpty) {
+                await _sendReminderNotification(titleController.text, bodyController.text);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Send Reminder'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // NEW METHOD: Triggers the FCM reminder notification via the queue
+  Future<void> _sendReminderNotification(String title, String body) async {
+     if (currentSubject == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Subject context is missing for reminder.')),
+      );
+      return;
+    }
+    
+    try {
+      // Use 'REMINDER' type which the Cloud Function is configured to handle
+      await _createNotificationTrigger('REMINDER', title, body: body); 
+      
+      _logActivity('Sent Faculty Reminder', {
+        'title': title, 
+        'bodySnippet': body.substring(0, min(body.length, 50)), 
+        'subject': currentSubject
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reminder successfully queued for students!'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error queuing reminder: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
 
   CollectionReference _getFilesCollectionRef() {
     return _firestore
@@ -877,12 +1072,30 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         .doc(currentSubject)
         .collection('files');
   }
+  
+  // NEW: Collection Reference for Student Material Requests
+  CollectionReference _getRequestsCollectionRef() {
+    return _firestore
+        .collection('colleges')
+        .doc(collegeId)
+        .collection('branches')
+        .doc(currentBranch)
+        .collection('regulations')
+        .doc(currentRegulation)
+        .collection('years')
+        .doc(currentYear)
+        .collection('subjects')
+        .doc(currentSubject)
+        .collection('addRequests');
+  }
 
   Future<void> _downloadFile(DocumentSnapshot doc) async {
     try {
       final data = doc.data() as Map<String, dynamic>;
       final fileName = data['fileName'];
-      final url = data['fileURL'];
+      final url = data['fileURL'] ?? data['url'];
+
+      if (url == null) throw Exception("File URL is missing.");
 
       final dio = Dio();
       final Directory? downloadsDir = await getExternalStorageDirectory();
@@ -925,8 +1138,13 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   Future<void> _shareFile(DocumentSnapshot doc) async {
     try {
       final data = doc.data() as Map<String, dynamic>;
-      final fileName = data['fileName'];
-      final url = data['fileURL'];
+      final fileName = data['fileName'] ?? data['title'];
+      final url = data['fileURL'] ?? data['url'];
+
+      if (data['type'] == 'link' || url == null) {
+        await Share.share('Check out this link from GradeMate: ${data['url']}');
+        return;
+      }
 
       final dio = Dio();
       final dir = await getTemporaryDirectory();
@@ -961,7 +1179,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       return;
     }
     
-    // **NEW**: Add to recently accessed when opened.
     await _addToRecentlyAccessed(doc);
 
     final uri = Uri.parse(url);
@@ -1030,9 +1247,8 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     final ownerEmail = fileData['ownerEmail'];
 
     if (ownerEmail != _auth.currentUser?.email) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content:
               Text('Permission Denied: You are not the owner of this item.'),
           backgroundColor: Colors.red,
         ),
@@ -1045,7 +1261,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       builder: (context) => AlertDialog(
         title: const Text('Delete Item?'),
         content: Text(
-            'Are you sure you want to permanently delete "${fileData['fileName'] ?? fileData['url']}"?'),
+            'Are you sure you want to permanently delete "${fileData['fileName'] ?? fileData['title'] ?? fileData['url']}"?'),
         actions: [
           TextButton(
             child: const Text('Cancel'),
@@ -1245,26 +1461,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         final data = doc.data() as Map<String, dynamic>;
 
         if (data['ownerEmail'] == _auth.currentUser?.email) {
-          deletedItemsNames
-              .add(data['fileName'] ?? data['title'] ?? 'Unknown Item');
-          if (data['type'] != 'link' && data['fileURL'] != null) {
-            try {
-              await _storage.refFromURL(data['fileURL']).delete();
-            } catch (e) {
-              print(
-                  "Could not delete file from storage (already deleted?): $e");
-            }
-          }
-          batch.delete(doc.reference);
           deletedCount++;
         } else {
           permissionErrors++;
         }
-      }
-
-      if (deletedItemsNames.isNotEmpty) {
-        _logActivity('Deleted Multiple Items',
-            {'count': deletedItemsNames.length, 'items': deletedItemsNames});
       }
 
       await batch.commit();
@@ -1286,9 +1486,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     }
   }
 
+  // --- UI/UX Revisions START ---
+
   Widget _buildBreadcrumbs() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
           Expanded(
@@ -1296,28 +1498,25 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: List.generate(breadcrumbs.length, (index) {
+                  final isLast = index == breadcrumbs.length - 1;
                   return Row(
                     children: [
                       GestureDetector(
-                        onTap: () => _navigateToBreadcrumb(index),
+                        onTap: isLast ? null : () => _navigateToBreadcrumb(index),
                         child: Text(
                           breadcrumbs[index],
-                          style: TextStyle(
-                            color: index == breadcrumbs.length - 1
-                                ? Colors.blue[800]
-                                : Colors.grey[600],
-                            fontWeight: index == breadcrumbs.length - 1
-                                ? FontWeight.bold
-                                : FontWeight.normal,
+                          style: GoogleFonts.inter(
+                            color: isLast ? Colors.black87 : _kPrimaryColor,
+                            fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
                             fontSize: 14,
                           ),
                         ),
                       ),
-                      if (index < breadcrumbs.length - 1)
+                      if (!isLast)
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 8),
                           child: Icon(Icons.chevron_right,
-                              size: 16, color: Colors.grey[600]),
+                              size: 16, color: Colors.grey[400]),
                         ),
                     ],
                   );
@@ -1329,6 +1528,52 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
       ),
     );
   }
+
+  // New generic tile builder for course hierarchy (Branch, Reg, Year, Subject)
+  Widget _buildCourseFolderTile(String name, String subtitle, IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade200),
+          // FIX: Removed boxShadows
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: _kPrimaryColor, size: 30),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(color: Colors.grey[600], fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildBranchesView() {
     return StreamBuilder<QuerySnapshot>(
@@ -1377,14 +1622,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           itemCount: branches.length,
           itemBuilder: (context, index) {
             var branch = branches[index].data() as Map<String, dynamic>;
-            return ListTile(
-              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
-              title: Text(
-                branch['name'] ?? 'No Name',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(branch['fullname'] ?? 'No full name provided'),
-              onTap: () {
+            return _buildCourseFolderTile(
+              branch['name'] ?? 'No Name',
+              branch['fullname'] ?? 'No full name provided',
+              Icons.computer_outlined,
+              () {
                 setState(() {
                   currentBranch = branch['name'];
                   breadcrumbs.add(branch['name']);
@@ -1444,14 +1686,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         return ListView.builder(
           itemCount: regulations.length,
           itemBuilder: (context, index) {
-            var regulation = regulations[index].data() as Map<String, dynamic>;
-            return ListTile(
-              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
-              title: Text(
-                regulation['name'] ?? regulations[index].id,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              onTap: () {
+            return _buildCourseFolderTile(
+              regulations[index].id,
+              'Regulation for ${currentBranch}',
+              Icons.rule_outlined,
+              () {
                 setState(() {
                   currentRegulation = regulations[index].id;
                   breadcrumbs.add(regulations[index].id);
@@ -1512,17 +1751,15 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
         return ListView.builder(
           itemCount: years.length,
           itemBuilder: (context, index) {
-            var year = years[index].data() as Map<String, dynamic>;
-            return ListTile(
-              leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
-              title: Text(
-                year['name'] ?? years[index].id,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              onTap: () {
+            final yearName = years[index].id;
+            return _buildCourseFolderTile(
+              yearName,
+              '$currentRegulation - $currentBranch',
+              Icons.calendar_today_outlined,
+              () {
                 setState(() {
-                  currentYear = years[index].id;
-                  breadcrumbs.add(years[index].id);
+                  currentYear = yearName;
+                  breadcrumbs.add(yearName);
                 });
               },
             );
@@ -1582,17 +1819,15 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           return ListView.builder(
             itemCount: subjects.length,
             itemBuilder: (context, index) {
-              var subject = subjects[index].data() as Map<String, dynamic>;
-              return ListTile(
-                leading: const Icon(Icons.folder, color: Colors.blue, size: 40),
-                title: Text(
-                  subject['name'] ?? subjects[index].id,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onTap: () {
+              final subjectName = subjects[index].id;
+              return _buildCourseFolderTile(
+                subjectName,
+                '$currentYear - $currentRegulation',
+                Icons.menu_book_outlined,
+                () {
                   setState(() {
-                    currentSubject = subjects[index].id;
-                    breadcrumbs.add(subjects[index].id);
+                    currentSubject = subjectName;
+                    breadcrumbs.add(subjectName);
                   });
                 },
               );
@@ -1614,20 +1849,6 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           return Center(
               child: Text("Error: ${snapshot.error}",
                   style: const TextStyle(color: Colors.red)));
-        }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.insert_drive_file_outlined,
-                    size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text('No content found. Tap + to add files or links.',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-              ],
-            ),
-          );
         }
 
         final allItems = snapshot.data!.docs;
@@ -1656,11 +1877,16 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
+                Icon(Icons.insert_drive_file_outlined,
+                    size: 64, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text('No items match your search.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+                Text(
+                  searchQuery.isNotEmpty
+                      ? 'No items match your search.'
+                      : 'No content found. Tap + to add files or links.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                ),
               ],
             ),
           );
@@ -1686,30 +1912,32 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   IconData _getFileIcon(String? fileType) {
     switch (fileType?.toLowerCase()) {
       case 'pdf':
-        return Icons.picture_as_pdf;
+        return Icons.picture_as_pdf_outlined;
       case 'doc':
       case 'docx':
-        return Icons.description;
+        return Icons.description_outlined;
       case 'ppt':
       case 'pptx':
-        return Icons.slideshow;
+        return Icons.slideshow_outlined;
       case 'xls':
       case 'xlsx':
-        return Icons.table_chart;
+        return Icons.table_chart_outlined;
       case 'jpg':
       case 'jpeg':
       case 'png':
       case 'gif':
-        return Icons.image;
+        return Icons.image_outlined;
       case 'mp4':
       case 'mov':
       case 'avi':
-        return Icons.movie;
+        return Icons.movie_outlined;
       case 'zip':
       case 'rar':
-        return Icons.archive;
+        return Icons.archive_outlined;
+      case 'link':
+        return Icons.link_outlined;
       default:
-        return Icons.insert_drive_file;
+        return Icons.insert_drive_file_outlined;
     }
   }
 
@@ -1719,72 +1947,89 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     final owner = fileData['ownerName'] ?? 'Unknown';
     final isSelected = _selectedItemIds.contains(doc.id);
     final isFavorite = _favoriteFilePaths.contains(doc.reference.path);
+    final isOwner = fileData['ownerEmail'] == _auth.currentUser?.email;
 
-    return ListTile(
-      leading: isSelected
-          ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
-          : Icon(_getFileIcon(fileData['type']),
-              color: Colors.blue, size: 40),
-      title: Text(
-        fileData['fileName'] ?? 'Untitled File',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.bold),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? _kPrimaryColor.withOpacity(0.1) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
       ),
-      subtitle: Text(size.isNotEmpty ? '$owner - $size' : owner),
-      onTap: () {
-        if (_isSelectionMode) {
-          _toggleSelection(doc.id);
-        } else {
-          final fileURL = fileData['fileURL'] as String?;
-          if (fileURL == null || fileURL.isEmpty) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Cannot open file: URL is missing.'),
-                backgroundColor: Colors.red,
-              ),
-            );
-            return;
-          }
+      child: ListTile(
+        leading: isSelected
+            ? Icon(Icons.check_circle, color: _kPrimaryColor, size: 30)
+            : Icon(_getFileIcon(fileData['type']),
+                color: _kPrimaryColor, size: 30),
+        title: Text(
+          fileData['fileName'] ?? 'Untitled File',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          size.isNotEmpty ? '$owner - $size' : owner,
+          style: GoogleFonts.inter(color: Colors.grey[600], fontSize: 13),
+        ),
+        onTap: () {
+          if (_isSelectionMode) {
+            _toggleSelection(doc.id);
+          } else {
+            final fileURL = fileData['fileURL'] as String?;
+            if (fileURL == null || fileURL.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cannot open file: URL is missing.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
 
-          _addToRecentlyAccessed(doc);
-          final file = FileData(
-            id: doc.id,
-            name: fileData['fileName'] ?? 'Untitled',
-            url: fileURL,
-            type: fileData['type'] ?? 'unknown',
-            size: fileData['size'] ?? 0,
-            uploadedAt: fileData['timestamp'] ?? Timestamp.now(),
-            ownerId: fileData['uploadedBy'] ?? '',
-            ownerName: owner,
-          );
-          context.push('/file_viewer', extra: file);
-        }
-      },
-      onLongPress: () {
-        _toggleSelection(doc.id);
-      },
-      trailing: !_isSelectionMode
-          ? PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'download') _downloadFile(doc);
-                if (value == 'share') _shareFile(doc);
-                if (value == 'rename') _showRenameDialog(doc);
-                if (value == 'delete') _confirmDeleteFile(doc);
-                if (value == 'edit_access') _showEditAccessDialog(doc);
-                if (value == 'favorite') _toggleFavorite(doc);
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'download', child: Text('Download')),
-                const PopupMenuItem(value: 'share', child: Text('Share')),
-                PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
-                const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                const PopupMenuItem(
-                    value: 'edit_access', child: Text('Edit Access')),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
-            )
-          : null,
+            _addToRecentlyAccessed(doc);
+            final file = FileData(
+              id: doc.id,
+              name: fileData['fileName'] ?? 'Untitled',
+              url: fileURL,
+              type: fileData['type'] ?? 'unknown',
+              size: fileData['size'] ?? 0,
+              uploadedAt: fileData['timestamp'] ?? Timestamp.now(),
+              ownerId: fileData['uploadedBy'] ?? '',
+              ownerName: owner,
+            );
+            context.push('/file_viewer', extra: file);
+          }
+        },
+        onLongPress: () {
+          if (isOwner) _toggleSelection(doc.id);
+        },
+        trailing: !_isSelectionMode
+            ? PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, color: Colors.grey[600]),
+                onSelected: (value) {
+                  if (value == 'download') _downloadFile(doc);
+                  if (value == 'share') _shareFile(doc);
+                  if (value == 'rename') _showRenameDialog(doc);
+                  if (value == 'delete') _confirmDeleteFile(doc);
+                  if (value == 'edit_access') _showEditAccessDialog(doc);
+                  if (value == 'favorite') _toggleFavorite(doc);
+                  if (value == 'send_reminder') _showSendReminderDialog(fileData['fileName'] ?? 'this file'); // NEW REMINDER ACTION
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'download', child: Text('Download')),
+                  const PopupMenuItem(value: 'share', child: Text('Share')),
+                  PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
+                  if (isOwner) ...[
+                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    const PopupMenuItem(value: 'edit_access', child: Text('Edit Access')),
+                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                  // NEW REMINDER OPTION
+                  const PopupMenuItem(value: 'send_reminder', child: Text('Send Reminder to Students')), 
+                ],
+              )
+            : null,
+      ),
     );
   }
 
@@ -1793,70 +2038,460 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     final owner = linkData['ownerName'] ?? 'Unknown';
     final isSelected = _selectedItemIds.contains(doc.id);
     final isFavorite = _favoriteFilePaths.contains(doc.reference.path);
+    final isOwner = linkData['ownerEmail'] == _auth.currentUser?.email;
 
-    return ListTile(
-      tileColor: isSelected ? Colors.blue.withOpacity(0.2) : null,
-      leading: isSelected
-          ? const Icon(Icons.check_circle, color: Colors.blue, size: 40)
-          : const Icon(Icons.link, color: Colors.blue, size: 40),
-      title: Text(
-        linkData['title'] ?? 'Web Link',
-        style: const TextStyle(fontWeight: FontWeight.bold),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? _kPrimaryColor.withOpacity(0.1) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
       ),
-      subtitle: Text(owner),
-      onTap: () {
-        if (_isSelectionMode) {
-          _toggleSelection(doc.id);
-        } else {
-          _openExternalUrl(doc);
-        }
-      },
-      onLongPress: () => _toggleSelection(doc.id),
-      trailing: !_isSelectionMode
-          ? PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'open_external') _openExternalUrl(doc);
-                if (value == 'rename') _showRenameDialog(doc);
-                if (value == 'delete') _confirmDeleteFile(doc);
-                if (value == 'edit_access') _showEditAccessDialog(doc);
-                if (value == 'favorite') _toggleFavorite(doc);
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                    value: 'open_external', child: Text('Open in Browser')),
-                PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
-                const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                const PopupMenuItem(
-                    value: 'edit_access', child: Text('Edit Access')),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
-            )
-          : null,
+      child: ListTile(
+        leading: isSelected
+            ? Icon(Icons.check_circle, color: _kPrimaryColor, size: 30)
+            : const Icon(Icons.link, color: Colors.blueAccent, size: 30),
+        title: Text(
+          linkData['title'] ?? 'Web Link',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          owner,
+          style: GoogleFonts.inter(color: Colors.grey[600], fontSize: 13),
+        ),
+        onTap: () {
+          if (_isSelectionMode) {
+            _toggleSelection(doc.id);
+          } else {
+            _openExternalUrl(doc);
+          }
+        },
+        onLongPress: () {
+          if (isOwner) _toggleSelection(doc.id);
+        },
+        trailing: !_isSelectionMode
+            ? PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, color: Colors.grey[600]),
+                onSelected: (value) {
+                  if (value == 'open_external') _openExternalUrl(doc);
+                  if (value == 'rename') _showRenameDialog(doc);
+                  if (value == 'delete') _confirmDeleteFile(doc);
+                  if (value == 'edit_access') _showEditAccessDialog(doc);
+                  if (value == 'favorite') _toggleFavorite(doc);
+                  if (value == 'send_reminder') _showSendReminderDialog(linkData['title'] ?? 'this link'); // NEW REMINDER ACTION
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                      value: 'open_external', child: Text('Open in Browser')),
+                  PopupMenuItem(value: 'favorite', child: Text(isFavorite ? 'Remove from Favorites' : 'Add to Favorites')),
+                  if (isOwner) ...[
+                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    const PopupMenuItem(value: 'edit_access', child: Text('Edit Access')),
+                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                  // NEW REMINDER OPTION
+                  const PopupMenuItem(value: 'send_reminder', child: Text('Send Reminder to Students')),
+                ],
+              )
+            : null,
+      ),
     );
   }
+
+  Widget _buildAddItem(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Card(
+        color: Colors.white,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 32, color: _kPrimaryColor),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // --- UI/UX Revisions END ---
+  
+  // --- NEW FEATURE: Material Request Management ---
+  
+  // FIX: Changed signature to accept tempStoragePath for robustness
+  Future<String> _transferFileToPermanentLocation(String tempFileUrl, String finalFileName, String? tempStoragePath) async {
+    try {
+      Reference tempRef;
+    
+      // 1. Get the original storage reference (using the Path or URL)
+      if (tempStoragePath != null && tempStoragePath.isNotEmpty) {
+        tempRef = _storage.ref().child(tempStoragePath);
+      } else {
+        tempRef = _storage.refFromURL(tempFileUrl);
+      }
+      
+      // 2. Define the permanent destination path
+      final String permanentFilePath = 
+          'courses/$collegeId/$currentBranch/$currentRegulation/$currentYear/$currentSubject/$finalFileName';
+      
+      final Reference permanentRef = _storage.ref().child(permanentFilePath);
+
+      // 3. Download the file data using the public URL
+      final String downloadUrl = await tempRef.getDownloadURL();
+      final response = await Dio().get(downloadUrl, options: Options(responseType: ResponseType.bytes));
+      
+      // 4. Re-upload (copy) the data to the new permanent location
+      final uploadTask = permanentRef.putData(response.data as Uint8List);
+      await uploadTask.whenComplete(() => null);
+      
+      // 5. Get the new public URL
+      final newFileUrl = await permanentRef.getDownloadURL();
+
+      // 6. Delete the temporary file
+      await tempRef.delete();
+      print("Temp storage file deleted successfully after transfer.");
+
+
+      return newFileUrl; // Success
+      
+    } catch (e) {
+      print("STORAGE TRANSFER ERROR: $e");
+      // Fallback: If transfer fails, return the old URL (or throw, but returning the old URL is safer for testing)
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('File transfer failed: $e. File might be inaccessible. (Temp URL used)'),
+        backgroundColor: Colors.orange,
+      ));
+      // Returning the temporary URL as a fail-safe string.
+      return tempFileUrl;
+    }
+  }
+
+  // New method to handle file acceptance
+  Future<void> _acceptMaterialRequest(DocumentSnapshot requestDoc) async {
+    final requestData = requestDoc.data() as Map<String, dynamic>;
+
+    // Required fields from the request (safe access)
+    final fileName = requestData['fileName'] ?? 'Untitled.pdf';
+    final requesterName = requestData['requesterName'] ?? 'Student';
+    final requesterEmail = requestData['requestedBy'] ?? 'student@example.com';
+    final fileType = requestData['fileExtension'] ?? requestData['type'] ?? 'unknown';
+    final tempFileUrl = requestData['fileURL'] as String?;
+    final fileSize = requestData['size'] ?? 0;
+    final tempStoragePath = requestData['storagePath'] as String?; // NEW: Get storage path
+
+    // FIX: Check if the widget is still mounted before proceeding after an async operation.
+    if (!mounted) return;
+    
+    if (tempFileUrl == null || tempFileUrl.isEmpty) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error: File URL is missing in request.'), backgroundColor: Colors.red));
+       return;
+    }
+
+    // 1. Transfer file and get new permanent URL
+    // FIX: Use a more readable and unique final file name
+    final finalFileName = '${fileName.replaceAll(' ', '_').replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '')}_${DateTime.now().millisecondsSinceEpoch}.${fileType}';
+
+    final newFileUrl = await _transferFileToPermanentLocation(tempFileUrl, finalFileName, tempStoragePath);
+
+    // FIX: Re-check mounted status after the potentially long file transfer operation.
+    if (!mounted) return;
+
+    try {
+      // 2. Create new document in the subject's main file collection
+      await _getFilesCollectionRef().add({
+        'type': fileType, 
+        'fileName': finalFileName, // Use the new unique file name
+        'fileURL': newFileUrl,     // Use the new permanent public URL
+        'size': fileSize,
+        
+        // Ownership details remain with the student (requester)
+        'ownerName': requesterName, 
+        'ownerEmail': requesterEmail, 
+        'uploadedBy': requesterEmail, 
+        
+        'sharedWith': ['Students', 'Faculty'],
+        'approvedBy': _auth.currentUser?.email, 
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      // 3. Delete the request document
+      await requestDoc.reference.delete();
+
+      // 4. Log activity
+      _logActivity('Accepted Material Request', {
+        'fileName': finalFileName,
+        'requester': requesterName,
+        'subject': currentSubject
+      });
+      
+      // 5. Trigger new material notification (new logic handles the student path)
+      await _createNotificationTrigger('file', finalFileName); 
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File "$finalFileName" approved and added to subject materials.'), backgroundColor: Colors.green),
+        );
+        // FIX: Ensure Navigator pop is the LAST UI action and check mounted status before it.
+        if (Navigator.canPop(context)) Navigator.pop(context); 
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error accepting file: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+  
+  // New method to handle file rejection
+  Future<void> _rejectMaterialRequest(DocumentSnapshot requestDoc) async {
+    final requestData = requestDoc.data() as Map<String, dynamic>;
+    final tempFileUrl = requestData['fileURL'] as String?;
+    final tempStoragePath = requestData['storagePath'] as String?; // NEW: Get storage path
+    
+    // FIX: Check mounted status early
+    if (!mounted) return;
+
+    // Delete the request document
+    try {
+      // If rejection, we should also delete the temporary file from storage
+      if ((tempFileUrl != null && tempFileUrl.isNotEmpty) || (tempStoragePath != null && tempStoragePath.isNotEmpty)) {
+         try {
+           Reference tempRef;
+           if (tempStoragePath != null && tempStoragePath.isNotEmpty) {
+             tempRef = _storage.ref().child(tempStoragePath);
+           } else if (tempFileUrl != null) {
+             // Fallback for older documents that might not have storagePath
+             tempRef = _storage.refFromURL(tempFileUrl);
+           } else {
+             // Should not happen if data is well-formed
+             throw Exception("No file reference found for rejection.");
+           }
+           await tempRef.delete();
+           print("Temp storage file deleted successfully on rejection.");
+         } catch (e) {
+           print("Failed to delete temp storage file on rejection: $e");
+         }
+      }
+
+      await requestDoc.reference.delete();
+      
+      _logActivity('Rejected Material Request', {
+        'fileName': requestData['fileName'],
+        'requester': requestData['requesterName'],
+        'subject': currentSubject
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File "${requestData['fileName']}" rejected and removed from requests.'), backgroundColor: Colors.orange),
+        );
+        // FIX: Ensure Navigator pop is the LAST UI action.
+        if (Navigator.canPop(context)) Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error rejecting file: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  // NEW METHOD: Open file from request dialog
+  void _openRequestFile(Map<String, dynamic> data) {
+    final fileURL = data['fileURL'] as String?;
+    final fileName = data['fileName'] as String?;
+    final fileType = data['fileType'] as String?;
+
+    if (fileURL == null || fileURL.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot open file: URL is missing.')),
+      );
+      return;
+    }
+
+    // FIX: Pass the correct FileData object
+    final file = FileData(
+      id: DateTime.now().millisecondsSinceEpoch.toString(), // Temporary ID for viewing
+      name: fileName ?? 'Request File',
+      url: fileURL,
+      type: fileType ?? 'unknown',
+      size: data['size'] ?? 0,
+      uploadedAt: data['timestamp'] ?? Timestamp.now(),
+      ownerId: data['requestedBy'] ?? 'request',
+      ownerName: data['requesterName'] ?? 'Student',
+    );
+    
+    // Use push to open the viewer with the temporary file object
+    context.push('/file_viewer', extra: file);
+  }
+
+  // New method to show the material requests dialog
+  void _showMaterialRequestsDialog() {
+    if (currentSubject == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(
+            'Material Requests: $currentSubject',
+            style: GoogleFonts.inter(fontWeight: FontWeight.bold),
+          ),
+          content: Container(
+            width: double.maxFinite,
+            constraints: const BoxConstraints(maxHeight: 400),
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _getRequestsCollectionRef()
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(
+                      child: Text('Error fetching requests: ${snapshot.error}'));
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'No new material requests.',
+                      style: GoogleFonts.inter(color: Colors.grey),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  itemCount: snapshot.data!.docs.length,
+                  itemBuilder: (context, index) {
+                    final doc = snapshot.data!.docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final fileName = data['fileName'] ?? data['title'] ?? 'Untitled';
+                    final requester = data['requesterName'] ?? 'A Student';
+                    final fileType = data['fileExtension'] ?? data['type'] ?? 'file';
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      elevation: 1,
+                      child: ListTile(
+                        leading: Icon(_getFileIcon(fileType), color: _kPrimaryColor),
+                        title: Text(
+                          fileName,
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text('Requested by $requester'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // NEW: Open File Button
+                            IconButton(
+                              icon: const Icon(Icons.open_in_new, color: Colors.blue),
+                              tooltip: 'Open File',
+                              onPressed: () => _openRequestFile(data),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                              tooltip: 'Accept',
+                              onPressed: () => _acceptMaterialRequest(doc),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                              tooltip: 'Reject',
+                              onPressed: () => _rejectMaterialRequest(doc),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // --- END NEW FEATURE ---
+
 
   AppBar _buildDefaultAppBar() {
     return AppBar(
       backgroundColor: Colors.white,
-      elevation: 0,
+      elevation: 1, // Added shadow for better distinction
       leading: IconButton(
         icon: const Icon(Icons.arrow_back, color: Colors.black),
         onPressed: _navigateBack,
       ),
       title: Text(
         breadcrumbs.last,
-        style: const TextStyle(
+        style: GoogleFonts.inter(
           color: Colors.black,
-          fontSize: 20,
+          fontSize: 18,
           fontWeight: FontWeight.bold,
         ),
       ),
       actions: [
+        // NEW: Material Requests Icon
+        if (currentSubject != null && !_isSelectionMode)
+          StreamBuilder<QuerySnapshot>(
+            stream: _getRequestsCollectionRef().snapshots(),
+            builder: (context, snapshot) {
+              final count = snapshot.data?.docs.length ?? 0;
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.people_alt_outlined, color: Colors.black),
+                    onPressed: _showMaterialRequestsDialog,
+                  ),
+                    // Badge to show pending requests count
+                  if (count > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                        child: Text(
+                          '$count',
+                          style: GoogleFonts.inter(
+                              color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          
+        // Add Content Button
         if (userRole == 'Faculty' && !_isSelectionMode)
           IconButton(
-            icon: const Icon(Icons.add_circle_outline, color: Colors.black),
+            icon: const Icon(Icons.add_circle_outline, color: _kPrimaryColor),
             onPressed: () {
               if (currentSubject != null) {
                 showDialog(
@@ -1865,14 +2500,18 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
                     title: const Text("Add Content"),
                     content: SizedBox(
                       width: MediaQuery.of(context).size.width * 0.8,
-                      height: MediaQuery.of(context).size.height * 0.2,
                       child: GridView.count(
                         crossAxisCount: 2,
+                        childAspectRatio: 1.5,
                         shrinkWrap: true,
                         children: [
                           _buildAddItem(Icons.upload_file, 'Upload File', () {
                             Navigator.pop(context);
                             _uploadFile();
+                          }),
+                          _buildAddItem(Icons.camera_alt, 'Camera', () { // NEW CAMERA OPTION
+                            Navigator.pop(context);
+                            _showCameraUploadDialog();
                           }),
                           _buildAddItem(Icons.add_link, 'Add Link', () {
                             Navigator.pop(context);
@@ -1886,7 +2525,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
               } else if (currentYear != null) {
                 _showAddSubjectDialog();
               } else if (currentRegulation != null) {
-                _showAddYearDialog(); // **MODIFIED**: Year dialog with options
+                _showAddYearDialog();
               } else if (currentBranch != null) {
                 _showAddRegulationDialog();
               } else {
@@ -1899,25 +2538,11 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
     );
   }
 
-  Widget _buildAddItem(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 40, color: Colors.blue[800]),
-          const SizedBox(height: 8),
-          Text(label),
-        ],
-      ),
-    );
-  }
-
   AppBar _buildSelectionAppBar() {
     return AppBar(
-      backgroundColor: Colors.blue[700],
+      backgroundColor: _kPrimaryColor,
       leading: IconButton(
-        icon: const Icon(Icons.close),
+        icon: const Icon(Icons.close, color: Colors.white),
         onPressed: () {
           setState(() {
             _isSelectionMode = false;
@@ -1925,10 +2550,10 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           });
         },
       ),
-      title: Text('${_selectedItemIds.length} selected'),
+      title: Text('${_selectedItemIds.length} selected', style: const TextStyle(color: Colors.white)),
       actions: [
         IconButton(
-          icon: const Icon(Icons.delete),
+          icon: const Icon(Icons.delete, color: Colors.white),
           onPressed: _confirmMultiDelete,
         ),
       ],
@@ -1948,9 +2573,9 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
           ),
           title: Text(
             breadcrumbs.last,
-            style: const TextStyle(
+            style: GoogleFonts.inter(
               color: Colors.black,
-              fontSize: 20,
+              fontSize: 18,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -1972,78 +2597,81 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
             ),
             const SizedBox(height: 16),
             const Expanded(
-              child: _FacultyCoursesShimmer(), // **NEW: Shimmer View**
+              child: _FacultyCoursesShimmer(),
             ),
           ],
         ),
-      );
-    }
+      
+    );
+  }
 
-    if (collegeId == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text("Courses")),
-        body: const Center(
-          child: Text("Error: College ID not found. Please check user data."),
-        ),
-      );
-    }
-
-    return PopScope(
-      canPop: currentBranch == null && !_isSelectionMode,
-      onPopInvoked: (bool didPop) {
-        if (!didPop) _navigateBack();
-      },
-      child: Scaffold(
-        appBar: _isSelectionMode && currentSubject != null
-            ? _buildSelectionAppBar()
-            : _buildDefaultAppBar(),
-        body: Column(
-          children: [
-            _buildBreadcrumbs(),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: const InputDecoration(
-                    icon: Icon(Icons.search, color: Colors.grey),
-                    hintText: 'Search',
-                    border: InputBorder.none,
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      searchQuery = value;
-                    });
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: currentSubject != null
-                  ? _buildFilesView()
-                  : currentYear != null
-                      ? _buildSubjectsView()
-                      : currentRegulation != null
-                          ? _buildYearsView()
-                          : currentBranch != null
-                              ? _buildRegulationsView()
-                              : _buildBranchesView(),
-            ),
-          ],
-        ),
+  if (collegeId == null) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Courses")),
+      body: const Center(
+        child: Text("Error: College ID not found. Please check user data."),
       ),
     );
   }
+
+  return PopScope(
+    canPop: currentBranch == null && !_isSelectionMode,
+    onPopInvoked: (bool didPop) {
+      if (!didPop) _navigateBack();
+    },
+    child: Scaffold(
+      appBar: _isSelectionMode && currentSubject != null
+          ? _buildSelectionAppBar()
+          : _buildDefaultAppBar(),
+      body: Column(
+        children: [
+          _buildBreadcrumbs(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100], // Lighter background for search bar
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  icon: Icon(Icons.search, color: Colors.grey[600]),
+                  hintText: 'Search in ${breadcrumbs.last}',
+                  hintStyle: GoogleFonts.inter(color: Colors.grey[600]),
+                  border: InputBorder.none,
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    searchQuery = value;
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: currentSubject != null
+                ? _buildFilesView()
+                : currentYear != null
+                    ? _buildSubjectsView()
+                    : currentRegulation != null
+                        ? _buildYearsView()
+                        : currentBranch != null
+                            ? _buildRegulationsView()
+                            : _buildBranchesView(),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 }
 
 // ----------------------------------------------------------------------
-// NEW SHIMMER EFFECT WIDGET
+// SHIMMER EFFECT WIDGET (Updated for new layout)
 // ----------------------------------------------------------------------
 
 class _FacultyCoursesShimmer extends StatelessWidget {
@@ -2061,43 +2689,49 @@ class _FacultyCoursesShimmer extends StatelessWidget {
   }
 
   Widget _buildItemTilePlaceholder({bool withSubtitle = true}) {
-    return ListTile(
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-      title: Align(
-        alignment: Alignment.centerLeft,
-        child: _buildPlaceholderBox(
-          height: 14,
-          width: 180,
-          radius: 6,
-        ),
-      ),
-      subtitle: withSubtitle
-          ? Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 4.0),
-                child: _buildPlaceholderBox(
-                  height: 12,
-                  width: 120,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            margin: const EdgeInsets.only(right: 16),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPlaceholderBox(
+                  height: 14,
+                  width: 180,
                   radius: 6,
                 ),
-              ),
-            )
-          : null,
-      trailing: Container(
-        width: 24,
-        height: 24,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          shape: BoxShape.circle,
-        ),
+                if (withSubtitle)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: _buildPlaceholderBox(
+                      height: 12,
+                      width: 120,
+                      radius: 6,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            width: 16,
+            height: 16,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2108,16 +2742,15 @@ class _FacultyCoursesShimmer extends StatelessWidget {
       baseColor: Colors.grey[300]!,
       highlightColor: Colors.grey[100]!,
       child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
         itemCount: 10,
         itemBuilder: (context, index) {
-          // Add a divider between list items to better simulate the list structure
           return Column(
             children: [
               _buildItemTilePlaceholder(
-                withSubtitle: index % 2 == 0, // Simulate subtitle sometimes
+                withSubtitle: index % 3 != 0,
               ),
-              const Divider(height: 1),
+              const Divider(height: 1, indent: 60, endIndent: 20, color: Colors.white),
             ],
           );
         },

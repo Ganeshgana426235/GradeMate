@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart'; // NEW IMPORT for opening mail app
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -50,6 +51,9 @@ class _RegisterPageState extends State<RegisterPage> {
   // Error messages
   final Map<String, String?> _registerErrors = {}; // Specific errors for registration fields
 
+  // UI Primary Color (using the original sky blue)
+  static const Color _primaryColor = Color(0xFF87CEEB);
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +75,73 @@ class _RegisterPageState extends State<RegisterPage> {
     super.dispose();
   }
 
+  // Helper function to create the new clean InputDecoration style
+  InputDecoration _buildInputDecoration({
+    required String hintText,
+    required String labelText,
+    required IconData icon,
+    String? errorText,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      hintText: hintText,
+      labelText: labelText,
+      labelStyle: TextStyle(
+        color: errorText != null ? Colors.red : Colors.black54,
+        fontWeight: FontWeight.w500,
+      ),
+      prefixIcon: Icon(icon, color: _primaryColor),
+      suffixIcon: suffixIcon,
+      errorText: errorText,
+      contentPadding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 16.0),
+      // Apply the same border style for all states for the clean outline look
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: BorderSide(color: Colors.grey[300]!, width: 1.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: BorderSide(color: Colors.grey[300]!, width: 1.0),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: _primaryColor, width: 2.0),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: Colors.red, width: 2.0),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: Colors.red, width: 2.0),
+      ),
+    );
+  }
+
+  // NEW FUNCTION: Launches the mail app with pre-filled details
+  Future<void> _launchCollegeReportEmail() async {
+    const String email = 'support@grademate.in';
+    const String subject = 'College Adding Request';
+    const String body = 'Please enter the full name of the college you would like to register:\n\nCollege Name: ';
+    
+    final Uri emailLaunchUri = Uri(
+      scheme: 'mailto',
+      path: email,
+      queryParameters: {
+        'subject': subject,
+        'body': body,
+      },
+    );
+
+    if (await canLaunchUrl(emailLaunchUri)) {
+      await launchUrl(emailLaunchUri);
+    } else {
+      if (mounted) {
+        _showSnackbar('Could not open email application. Please contact $email manually.', success: false);
+      }
+    }
+  }
+
   // Fetches colleges from Firestore for dropdowns
   Future<void> _fetchDropdownData() async {
     debugPrint('Fetching college data...');
@@ -86,9 +157,6 @@ class _RegisterPageState extends State<RegisterPage> {
           _availableColleges.sort((a, b) => a.fullName.compareTo(b.fullName)); // Sort by full name
           _isLoadingDropdowns = false;
           debugPrint('Fetched ${_availableColleges.length} colleges.');
-          for (var college in _availableColleges) {
-            debugPrint('  - ${college.fullName}: Regulations: ${college.regulations}, Years: ${college.courseYear}');
-          }
         });
       }
     } catch (e) {
@@ -288,6 +356,9 @@ class _RegisterPageState extends State<RegisterPage> {
 
       await userCredential.user!.sendEmailVerification();
 
+      // Placeholder for FCM Token.
+      const String fcmToken = 'PLACEHOLDER_FCM_TOKEN'; 
+
       Map<String, dynamic> userData = {
         'uid': userCredential.user!.uid,
         'name': name,
@@ -298,17 +369,48 @@ class _RegisterPageState extends State<RegisterPage> {
         'createdAt': FieldValue.serverTimestamp(),
         'profileImageUrl': 'https://placehold.co/150x150/cccccc/000000?text=Profile', // Default placeholder image URL
         'isSubscribed': false,
-        'files': [], // NEW: Initialize as empty array
-        'folders': [], // NEW: Initialize as empty array
+        'files': [], 
+        'folders': [], 
       };
 
       if (role == 'Student') {
+        final studentBranch = _branchController.text.trim().toUpperCase();
+        final studentRegulation = _selectedRegulation!.toUpperCase();
+        final studentYear = _selectedCourseYear!.toUpperCase();
+        
         userData.addAll({
-          'branch': _branchController.text.trim().toLowerCase(), // Store branch in lowercase
-          'regulation': _selectedRegulation!,
-          'year': _selectedCourseYear, // Store course year
+          // Save student details to the main user doc (in CAPITALS as requested)
+          'branch': studentBranch, 
+          'regulation': studentRegulation,
+          'year': studentYear,
           'rollNo': _rollNoController.text.trim(),
         });
+
+        final studentRegistrationData = {
+          'uid': userCredential.user!.uid,
+          'name': name,
+          'year': studentYear,
+          'fcmToken': fcmToken,
+          'regulation': studentRegulation, // Added for new structure
+          'branch': studentBranch, // Added for new structure
+        };
+        
+        // --- 1. NEW REQUIREMENT: Store Student details directly under /colleges/{collegeId}/Students/{uid} ---
+        await FirebaseFirestore.instance
+            .collection('colleges').doc(collegeId)
+            .collection('Students').doc(userCredential.user!.uid)
+            .set(studentRegistrationData);
+        // ---------------------------------------------------------------------------------------------------
+        
+        // --- 2. PREVIOUS REQUIREMENT: Store Student details in the deeply nested structure ---
+        // Path: colleges/{collegeId}/branches/{BRANCH_NAME}/regulations/{REGULATION_NAME}/Students/{uid}
+        await FirebaseFirestore.instance
+            .collection('colleges').doc(collegeId)
+            .collection('branches').doc(studentBranch) 
+            .collection('regulations').doc(studentRegulation) 
+            .collection('Students').doc(userCredential.user!.uid) 
+            .set(studentRegistrationData);
+        // ------------------------------------------------------------------------------------------
       } else if (role == 'Faculty') {
         userData.addAll({
           'department': _departmentController.text.trim(),
@@ -316,7 +418,7 @@ class _RegisterPageState extends State<RegisterPage> {
         });
       }
 
-      // Set the user document in the 'users' collection with the email as the document ID
+      // Set the main user document in the 'users' collection 
       await FirebaseFirestore.instance.collection('users').doc(email).set(userData);
 
       if (mounted) {
@@ -409,7 +511,7 @@ class _RegisterPageState extends State<RegisterPage> {
           },
         ),
         title: const Text(
-          'Register',
+          'Register New Account', // Slightly updated title
           style: TextStyle(
             color: Colors.black,
             fontSize: 20,
@@ -421,89 +523,91 @@ class _RegisterPageState extends State<RegisterPage> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Role Selection
+            // Role Selection (Updated UI to match image style)
             const Text(
               'Select your Role/Profession',
               style: TextStyle(
                 color: Colors.black87,
                 fontSize: 16,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            Row(
-              children: ['Student', 'Faculty'].map((role) {
-                bool isSelected = _selectedRegisterRole == role;
-                return Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _selectedRegisterRole = role;
-                        // Clear student/faculty-specific fields when switching roles
-                        if (role == 'Faculty') {
-                          _branchController.clear();
-                          _selectedCourseYear = null;
-                          _selectedRegulation = null;
-                          _rollNoController.clear();
-                        } else {
-                          _departmentController.clear();
-                          _designationController.clear();
-                        }
-                        _branchesForSelectedCollege = [];
-                        _regulationsForSelectedCollege = [];
-                        _courseYearsForSelectedCollege = [];
-                        _registerErrors.clear(); // Clear errors on role change
-                      });
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFF87CEEB).withOpacity(0.2)
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isSelected ? const Color(0xFF87CEEB) : Colors.grey[400]!,
-                          width: isSelected ? 2 : 1,
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: ['Student', 'Faculty'].map((role) {
+                  bool isSelected = _selectedRegisterRole == role;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedRegisterRole = role;
+                          // Clear student/faculty-specific fields when switching roles
+                          if (role == 'Faculty') {
+                            _branchController.clear();
+                            _selectedCourseYear = null;
+                            _selectedRegulation = null;
+                            _rollNoController.clear();
+                          } else {
+                            _departmentController.clear();
+                            _designationController.clear();
+                          }
+                          _branchesForSelectedCollege = [];
+                          _regulationsForSelectedCollege = [];
+                          _courseYearsForSelectedCollege = [];
+                          _registerErrors.clear(); // Clear errors on role change
+                        });
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.all(4),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? _primaryColor // Solid primary color when selected
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? _primaryColor : Colors.transparent,
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              role == 'Student' ? Icons.person_outline : Icons.school_outlined,
+                              color: isSelected ? Colors.white : Colors.black54, // White icon when selected
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              role,
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.black87, // White text when selected
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      child: Column(
-                        children: [
-                          Icon(
-                            role == 'Student' ? Icons.person_outline : Icons.school_outlined,
-                            color: isSelected ? const Color(0xFF87CEEB) : Colors.grey[600],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            role,
-                            style: TextStyle(
-                              color: isSelected ? const Color(0xFF87CEEB) : Colors.black87,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }).toList(),
+              ),
             ),
             const SizedBox(height: 24),
 
             // Name Input
             TextField(
               controller: _nameController,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
-                hintText: 'Enter your name',
-                labelText: 'Name',
-                labelStyle: TextStyle(color: _registerErrors['name'] != null ? Colors.red : Colors.black54),
-                prefixIcon: const Icon(Icons.person_outline, color: Colors.black54),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              decoration: _buildInputDecoration(
+                hintText: 'Enter your full name',
+                labelText: 'Full name',
+                icon: Icons.person_outline,
                 errorText: _registerErrors['name'],
               ),
             ),
@@ -513,14 +617,10 @@ class _RegisterPageState extends State<RegisterPage> {
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
+              decoration: _buildInputDecoration(
                 hintText: 'Enter your email',
                 labelText: 'Email',
-                labelStyle: TextStyle(color: _registerErrors['email'] != null ? Colors.red : Colors.black54),
-                prefixIcon: const Icon(Icons.email_outlined, color: Colors.black54),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                icon: Icons.email_outlined,
                 errorText: _registerErrors['email'],
               ),
             ),
@@ -530,19 +630,15 @@ class _RegisterPageState extends State<RegisterPage> {
             TextField(
               controller: _passwordController,
               obscureText: _obscurePassword,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
+              decoration: _buildInputDecoration(
                 hintText: 'Enter your password',
                 labelText: 'Password',
-                labelStyle: TextStyle(color: _registerErrors['password'] != null ? Colors.red : Colors.black54),
-                prefixIcon: const Icon(Icons.lock_outline, color: Colors.black54),
+                icon: Icons.lock_outline,
+                errorText: _registerErrors['password'],
                 suffixIcon: IconButton(
                   icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
                   onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                 ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                errorText: _registerErrors['password'],
               ),
             ),
             const SizedBox(height: 16),
@@ -551,19 +647,15 @@ class _RegisterPageState extends State<RegisterPage> {
             TextField(
               controller: _confirmPasswordController,
               obscureText: _obscureConfirmPassword,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
+              decoration: _buildInputDecoration(
                 hintText: 'Confirm your password',
                 labelText: 'Confirm Password',
-                labelStyle: TextStyle(color: _registerErrors['confirmPassword'] != null ? Colors.red : Colors.black54),
-                prefixIcon: const Icon(Icons.lock_outline, color: Colors.black54),
+                icon: Icons.lock_outline,
+                errorText: _registerErrors['confirmPassword'],
                 suffixIcon: IconButton(
                   icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
                   onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
                 ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                errorText: _registerErrors['confirmPassword'],
               ),
             ),
             const SizedBox(height: 16),
@@ -572,14 +664,10 @@ class _RegisterPageState extends State<RegisterPage> {
             TextField(
               controller: _phoneController,
               keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
+              decoration: _buildInputDecoration(
                 hintText: 'Enter your phone number',
                 labelText: 'Phone',
-                labelStyle: TextStyle(color: _registerErrors['phone'] != null ? Colors.red : Colors.black54),
-                prefixIcon: const Icon(Icons.phone_android_outlined, color: Colors.black54),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                icon: Icons.phone_android_outlined,
                 errorText: _registerErrors['phone'],
               ),
             ),
@@ -621,20 +709,35 @@ class _RegisterPageState extends State<RegisterPage> {
                   controller: controller,
                   focusNode: focusNode,
                   onEditingComplete: onEditingComplete,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: const Color(0xFFF0F2F5),
+                  decoration: _buildInputDecoration(
                     hintText: 'Select your college',
                     labelText: 'College',
-                    labelStyle: TextStyle(color: _registerErrors['college'] != null ? Colors.red : Colors.black54),
-                    prefixIcon: const Icon(Icons.school_outlined, color: Colors.black54),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    icon: Icons.school_outlined,
                     errorText: _registerErrors['college'],
                   ),
                 );
               },
             ),
-            const SizedBox(height: 16),
+            
+            // NEW UI ELEMENT: Report College Not Found Link
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: GestureDetector(
+                onTap: _launchCollegeReportEmail,
+                child: const Text(
+                  'Report college not found',
+                  style: TextStyle(
+                    color: _primaryColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+
 
             // Student-specific fields
             if (_selectedRegisterRole == 'Student') ...[
@@ -662,14 +765,10 @@ class _RegisterPageState extends State<RegisterPage> {
                     controller: controller,
                     focusNode: focusNode,
                     onEditingComplete: onEditingComplete,
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: const Color(0xFFF0F2F5),
+                    decoration: _buildInputDecoration(
                       hintText: 'Select your branch',
                       labelText: 'Branch',
-                      labelStyle: TextStyle(color: _registerErrors['branch'] != null ? Colors.red : Colors.black54),
-                      prefixIcon: const Icon(Icons.account_tree_outlined, color: Colors.black54),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      icon: Icons.account_tree_outlined,
                       errorText: _registerErrors['branch'],
                     ),
                   );
@@ -682,13 +781,12 @@ class _RegisterPageState extends State<RegisterPage> {
                 value: _selectedCourseYear,
                 hint: Text(
                   'Select Academic Year',
-                  style: TextStyle(color: _registerErrors['courseYear'] != null ? Colors.red : Colors.black54),
+                  style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w500),
                 ),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF0F2F5),
-                  prefixIcon: const Icon(Icons.calendar_today_outlined, color: Colors.black54),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                decoration: _buildInputDecoration(
+                  hintText: '',
+                  labelText: 'Year',
+                  icon: Icons.calendar_today_outlined,
                   errorText: _registerErrors['courseYear'],
                 ),
                 items: _courseYearsForSelectedCollege.map((String year) {
@@ -712,13 +810,12 @@ class _RegisterPageState extends State<RegisterPage> {
                 value: _selectedRegulation,
                 hint: Text(
                   'Select Regulation',
-                  style: TextStyle(color: _registerErrors['regulation'] != null ? Colors.red : Colors.black54),
+                  style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w500),
                 ),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF0F2F5),
-                  prefixIcon: const Icon(Icons.rule_folder_outlined, color: Colors.black54),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                decoration: _buildInputDecoration(
+                  hintText: '',
+                  labelText: 'Regulation',
+                  icon: Icons.rule_folder_outlined,
                   errorText: _registerErrors['regulation'],
                 ),
                 items: _regulationsForSelectedCollege.map((String regulation) {
@@ -740,14 +837,10 @@ class _RegisterPageState extends State<RegisterPage> {
               // Roll Number Input
               TextField(
                 controller: _rollNoController,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF0F2F5),
+                decoration: _buildInputDecoration(
                   hintText: 'Enter your roll number',
                   labelText: 'Roll No',
-                  labelStyle: TextStyle(color: _registerErrors['rollNo'] != null ? Colors.red : Colors.black54),
-                  prefixIcon: const Icon(Icons.numbers_outlined, color: Colors.black54),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  icon: Icons.numbers_outlined,
                   errorText: _registerErrors['rollNo'],
                 ),
               ),
@@ -758,28 +851,20 @@ class _RegisterPageState extends State<RegisterPage> {
             if (_selectedRegisterRole == 'Faculty') ...[
               TextField(
                 controller: _departmentController,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF0F2F5),
+                decoration: _buildInputDecoration(
                   hintText: 'e.g., Computer Science',
                   labelText: 'Department',
-                  labelStyle: TextStyle(color: _registerErrors['department'] != null ? Colors.red : Colors.black54),
-                  prefixIcon: const Icon(Icons.business_outlined, color: Colors.black54),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  icon: Icons.business_outlined,
                   errorText: _registerErrors['department'],
                 ),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _designationController,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF0F2F5),
+                decoration: _buildInputDecoration(
                   hintText: 'e.g., Professor',
                   labelText: 'Designation',
-                  labelStyle: TextStyle(color: _registerErrors['designation'] != null ? Colors.red : Colors.black54),
-                  prefixIcon: const Icon(Icons.work_outline, color: Colors.black54),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  icon: Icons.work_outline,
                   errorText: _registerErrors['designation'],
                 ),
               ),
@@ -793,11 +878,12 @@ class _RegisterPageState extends State<RegisterPage> {
               child: ElevatedButton(
                 onPressed: _isRegistering ? null : _handleRegister,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF87CEEB),
+                  backgroundColor: _primaryColor,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                   elevation: 0,
+                  disabledBackgroundColor: _primaryColor.withOpacity(0.5),
                 ),
                 child: _isRegistering
                     ? const CircularProgressIndicator(color: Colors.white)
@@ -814,26 +900,28 @@ class _RegisterPageState extends State<RegisterPage> {
             const SizedBox(height: 20),
 
             // Already have an account? Sign in
-            GestureDetector(
-              onTap: () {
-                context.go('/login');
-              },
-              child: RichText(
-                text: const TextSpan(
-                  text: 'Already have an account? ',
-                  style: TextStyle(
-                    color: Colors.black54,
-                    fontSize: 16,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'Sign in',
-                      style: TextStyle(
-                        color: Color(0xFF87CEEB),
-                        fontWeight: FontWeight.bold,
-                      ),
+            Center(
+              child: GestureDetector(
+                onTap: () {
+                  context.go('/login');
+                },
+                child: RichText(
+                  text: const TextSpan(
+                    text: 'Already have an account? ',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 16,
                     ),
-                  ],
+                    children: [
+                      TextSpan(
+                        text: 'Sign in',
+                        style: TextStyle(
+                          color: _primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

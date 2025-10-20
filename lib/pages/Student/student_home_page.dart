@@ -251,6 +251,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       {'icon': Icons.note_alt_outlined, 'label': 'My Notes', 'route': '/my_notes'},
       {'icon': Icons.notifications_active_outlined, 'label': 'Reminders', 'route': '/reminders'},
       {'icon': Icons.business_center_outlined, 'label': 'Job Updates', 'route': '/job_updates'},
+      {'icon': Icons.chat, 'label': 'Connect', 'route': '/student_chat'},
     ];
 
     return Scaffold(

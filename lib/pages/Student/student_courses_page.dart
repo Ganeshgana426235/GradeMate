@@ -15,6 +15,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:intl/intl.dart'; 
 import 'package:file_picker/file_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart'; // ADDED: Firebase Storage import
 
 // Defined the new primary color based on the user's image
 const Color _kPrimaryColor = Color(0xFF6A67FE);
@@ -31,6 +32,7 @@ class StudentCoursesPage extends StatefulWidget {
 class _StudentCoursesPageState extends State<StudentCoursesPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance; // ADDED: Storage instance
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
   String? _collegeId;
@@ -254,14 +256,15 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     }
   }
   
-  // NEW METHOD: Show dialog for adding a new resource
+  // FIXED: Implement actual file upload to Firebase Storage
   Future<void> _showAddResourceDialog() async {
-    if (_collegeId == null || _branch == null || _regulation == null || _currentYearId == null || _currentSubjectId == null) {
+    if (_collegeId == null || _branch == null || _regulation == null || _currentYearId == null || _currentSubjectId == null || _userEmail == null || _auth.currentUser?.uid == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot add resource: Course details are missing.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot add resource: User or course details are missing.'), backgroundColor: Colors.red));
       return;
     }
     
+    // 1. Pick file
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif'],
@@ -269,14 +272,13 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     
     if (result == null || result.files.single.path == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No file selected or selection cancelled.')));
-      return;
+      return; // No file selected, silently exit
     }
     
     final platformFile = result.files.single;
-    final filePath = 'gs://temp-upload-path/${platformFile.name}'; 
-    final fileName = platformFile.name;
-    final fileExtension = platformFile.extension?.toLowerCase() ?? 'unknown';
+    final File fileToUpload = File(platformFile.path!);
+    final String fileName = platformFile.name;
+    final String fileExtension = platformFile.extension?.toLowerCase() ?? 'unknown';
     
     String fileType = fileExtension;
     if (['jpg', 'jpeg', 'png', 'gif'].contains(fileExtension)) fileType = 'image';
@@ -285,7 +287,33 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     else if (['xls', 'xlsx'].contains(fileExtension)) fileType = 'xls';
     else if (fileExtension == 'pdf') fileType = 'pdf';
 
+    // Generate a unique ID for the request and the file
+    final String fileId = _firestore.collection('temp').doc().id; 
+    final String userId = _auth.currentUser!.uid;
+
+    // 2. Define the storage path for temporary request
+    // Path structure: /uploads/{userId}/{fileId}/{fileName}
+    final String storagePath = 'uploads/$userId/$fileId/$fileName';
+    final Reference storageRef = _storage.ref().child(storagePath);
+    
+    String? fileDownloadUrl;
+    
     try {
+      // 3. Upload file to Firebase Storage
+      final uploadTask = storageRef.putFile(fileToUpload);
+      
+      // Monitor upload progress (optional but good UX)
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        final progress = (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt();
+        // You would typically show a notification or UI progress bar here
+        print('Upload progress: $progress%');
+      });
+      
+      // Wait for completion and get the download URL
+      final TaskSnapshot snapshot = await uploadTask.whenComplete(() => {});
+      fileDownloadUrl = await snapshot.ref.getDownloadURL();
+      
+      // 4. Create Firestore Request Document
       final reviewCollectionRef = _firestore
           .collection('colleges').doc(_collegeId)
           .collection('branches').doc(_branch)
@@ -299,7 +327,8 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         'type': fileType,
         'fileExtension': fileExtension,
         'size': platformFile.size,
-        'fileURL': filePath,
+        'fileURL': fileDownloadUrl, // Store the actual download URL
+        'storagePath': storagePath, // Store the storage path for faculty deletion
         'status': 'Pending',
         'requestedBy': _userEmail,
         'requesterName': _userName ?? 'Student',
@@ -309,7 +338,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Resource submitted for faculty review!'),
+          content: Text('Resource uploaded and submitted for faculty review!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -327,10 +356,19 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error submitting request: $e'),
+          content: Text('Error uploading file or submitting request: $e'),
           backgroundColor: Colors.red,
         ),
       );
+      
+      // Optional: Delete the file from storage if the Firestore write failed
+      if (fileDownloadUrl != null) {
+         try {
+           await _storage.refFromURL(fileDownloadUrl).delete();
+         } catch (storageError) {
+           print("Failed to clean up storage after Firestore error: $storageError");
+         }
+      }
     }
   }
 

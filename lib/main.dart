@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:grademate/pages/Faculty/faculty_chat_page.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -44,7 +45,8 @@ import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:firebase_messaging/firebase_messaging.dart'; // [NEW IMPORT]
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // [NEW IMPORT]
 import 'package:grademate/pages/Student/job_updates_page.dart';
-
+import 'package:grademate/pages/Student/student_chat_page.dart';
+import 'package:grademate/pages/Student/student_assignment_page.dart';
 
 // [NEW FCM BACKGROUND HANDLER]
 /// Must be a top-level function, cannot be a method of a class.
@@ -90,6 +92,18 @@ final _router = GoRouter(
     path: '/job_updates', // The new route path
     builder: (context, state) => const JobUpdatesPage(),
   ),
+  GoRoute(
+      path: '/student_chat', // The new route path
+      builder: (context, state) => const StudentChatPage(),
+    ),
+    GoRoute(
+      path: '/faculty_chat', // The new route path
+      builder: (context, state) => const FacultyChatPage(),
+    ),
+    GoRoute(
+      path: '/student_assignments', // The new route path
+      builder: (context, state) => const StudentAssignmentPage(),
+    ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         return StudentShell(navigationShell: navigationShell);
