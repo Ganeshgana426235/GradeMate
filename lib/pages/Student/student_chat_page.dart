@@ -131,6 +131,7 @@ class _StudentChatPageState extends State<StudentChatPage> {
             collegeId: 'error', branch: 'error', year: 'error', regulation: 'error',
           );
     } finally {
+      // FIX: Ensure setState is only called if the widget is still mounted
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -278,19 +279,22 @@ class __ChatRoomState extends State<_ChatRoom> {
         .orderBy('timestamp', descending: true)
         .limit(30);
 
-    // Initial load state is handled here.
+    // Initial load state: Added mounted check
     baseQuery.get().then((initialSnapshot) {
-      if (mounted) {
+      if (mounted) { // FIX: Added mounted check
          _firestoreMessages = initialSnapshot.docs.reversed.toList();
          _firestoreMessagesController.add(_firestoreMessages);
          setState(() {
             _isInitialLoad = false;
          });
-         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+         WidgetsBinding.instance.addPostFrameCallback((_) {
+            // FIX: Check mounted before scrolling, which uses context/controller
+            if (mounted) _scrollToBottom();
+         });
       }
     }).catchError((error) {
        print('Firestore Initial Load Error: $error');
-       if (mounted) {
+       if (mounted) { // FIX: Added mounted check
           setState(() {
              _isInitialLoad = false;
           });
@@ -301,7 +305,8 @@ class __ChatRoomState extends State<_ChatRoom> {
     // Start the continuous listener for updates
     _chatSubscription = baseQuery.snapshots(includeMetadataChanges: true).listen(
       (snapshot) {
-        if (mounted && !_isInitialLoad) {
+        // FIX: Added mounted check before processing snapshot
+        if (mounted && !_isInitialLoad) { 
           
           bool addedNewMessage = false;
           
@@ -350,7 +355,10 @@ class __ChatRoomState extends State<_ChatRoom> {
           
           // Scroll to bottom only if a new message was added by another user
           if (addedNewMessage) {
-             WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+             WidgetsBinding.instance.addPostFrameCallback((_) {
+                 // FIX: Check mounted before scrolling
+                 if (mounted) _scrollToBottom(); 
+             });
           }
         }
       },
@@ -374,7 +382,7 @@ class __ChatRoomState extends State<_ChatRoom> {
       // Deletion success is handled by the listener removing the doc from _firestoreMessages.
     } catch (e) {
       print('Error deleting message $docId: $e');
-      if (mounted) {
+      if (mounted) { // FIX: Added mounted check
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to delete message.')),
         );
@@ -391,7 +399,7 @@ class __ChatRoomState extends State<_ChatRoom> {
       });
     } catch (e) {
       print('Error editing message $docId: $e');
-      if (mounted) {
+      if (mounted) { // FIX: Added mounted check
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to edit message.')),
         );
@@ -448,9 +456,11 @@ class __ChatRoomState extends State<_ChatRoom> {
     if (text.isEmpty) return;
     
     if (text.length > _maxMessageLength) {
-       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Message exceeds the maximum limit of $_maxMessageLength characters.')),
-        );
+       if (mounted) { // FIX: Added mounted check
+         ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Message exceeds the maximum limit of $_maxMessageLength characters.')),
+          );
+       }
         return;
     }
 
@@ -479,7 +489,9 @@ class __ChatRoomState extends State<_ChatRoom> {
       ));
     });
     _messageController.clear();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToBottom(); // FIX: Added mounted check
+    });
 
     // 3. Attempt to send to Firestore
     try {
@@ -489,7 +501,7 @@ class __ChatRoomState extends State<_ChatRoom> {
     } catch (e) {
       print('Error sending message: $e');
       // Failure: Update status of the pending message
-      if (mounted) {
+      if (mounted) { // FIX: Added mounted check
         setState(() {
           final index = _pendingMessages.indexWhere((m) => m.id == tempId);
           if (index != -1) {
@@ -702,28 +714,51 @@ class _MessageBubble extends StatelessWidget {
     final date = timestamp is Timestamp ? timestamp.toDate() : timestamp as DateTime;
     return DateFormat('h:mm a').format(date);
   }
+
+  // Helper to truncate year string to first 3 characters
+  String _truncateYear(String year) {
+    if (year.length > 3) {
+      return year.substring(0, 3);
+    }
+    return year;
+  }
   
-  // Helper to format the sender display text based on chat type
+  // Helper to format the sender display text based on chat type and role
   String _getSenderDetails() {
-    final name = chatMessage.data['name'] ?? 'Unknown User'; 
-    final role = chatMessage.data['role'] ?? 'Unknown Role';
-    final branch = (chatMessage.data['branch'] ?? 'N/A');
-    final year = (chatMessage.data['year'] ?? 'N/A');
+    final String name = chatMessage.data['name'] ?? 'Unknown User'; 
+    final String role = chatMessage.data['role'] ?? 'Unknown Role';
+    final String branch = (chatMessage.data['branch'] ?? 'N/A').toUpperCase();
+    final String year = (chatMessage.data['year'] ?? 'N/A').toUpperCase();
     
     if (isMe) {
       return 'You';
     }
     
+    // --- FINAL CHANGE: Faculty Role Logic ---
+    if (role.toUpperCase() == 'FACULTY') {
+      // Faculty: Only show name - role
+      return '$name - $role';
+    }
+    
+    // --- Student/Other Role Logic ---
+    
+    String displayRole = role;
+    String displayBranch = branch;
+    String displayYear = year;
+    
+    // Apply requested year truncation for student view
+    displayYear = _truncateYear(year);
+
     switch (chatType) {
       case ChatType.college:
-        // College Tab: name - role | branch - year
-        return '$name - $role | ${branch.toUpperCase()} - ${year.toUpperCase()}';
+        // College Tab (Student View): name - role | branch - year
+        return '$name - $displayRole | $displayBranch - $displayYear';
       case ChatType.branch:
-        // Branch Tab: name (role) | year
-        return '$name ($role) | ${year.toUpperCase()}';
+        // Branch Tab (Student View): name (role) | year
+        return '$name ($displayRole) | $displayYear';
       case ChatType.year:
-        // Year Tab: name (role) | year
-        return '$name ($role) | ${year.toUpperCase()}';
+        // Year Tab (Student View): name (role) | year
+        return '$name ($displayRole) | $displayYear';
     }
   }
 
@@ -818,7 +853,7 @@ class _MessageBubble extends StatelessWidget {
               Flexible(
                 child: Text(
                   _getSenderDetails(), 
-                  overflow: TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis, // Ensures overflow protection
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,

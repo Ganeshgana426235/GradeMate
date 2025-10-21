@@ -21,9 +21,81 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart'; 
 import 'package:google_fonts/google_fonts.dart'; // Added for consistent styling
 import 'package:intl/intl.dart'; // Added for reminder dialog
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // NEW: Google Mobile Ads SDK
 
 // Primary accent color from student_home_page
 const Color _kPrimaryColor = Color(0xFF6A67FE);
+
+// --- NEW: Reusable Banner Ad Widget (Copied from faculty_home_page.dart) ---
+class BannerAdWidget extends StatefulWidget {
+  const BannerAdWidget({super.key});
+
+  @override
+  State<BannerAdWidget> createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+  
+  // Google's official TEST Ad Unit IDs for Banner Ad
+  // MUST be replaced with real IDs for production
+  final String _adUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/6300978111' 
+    : 'ca-app-pub-3940256099942544/2934735716'; 
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  void _loadAd() {
+    _bannerAd = BannerAd(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      size: AdSize.banner,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          print('BannerAd failed to load: $error');
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAdLoaded && _bannerAd != null) {
+      // Ensure the ad is properly sized when loaded
+      return Container(
+        alignment: Alignment.center,
+        width: _bannerAd!.size.width.toDouble(),
+        height: _bannerAd!.size.height.toDouble(),
+        child: AdWidget(ad: _bannerAd!),
+      );
+    } else {
+      // Show a placeholder container to prevent layout shifting
+      return const SizedBox(height: 50); 
+    }
+  }
+}
+// --- END Banner Ad Widget ---
 
 class FacultyMyFilesPage extends StatefulWidget {
   final String? folderId;
@@ -974,61 +1046,70 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
       },
       child: Scaffold(
         appBar: _isSelectionMode ? _buildSelectionAppBar() : _buildNormalAppBar(),
-        body: RefreshIndicator(
-          onRefresh: _refreshItems, 
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 8),
-                _buildBreadcrumbs(),
-                const SizedBox(height: 16),
-                
-                _buildSearchBar(),
-                const SizedBox(height: 16),
-                
-                _buildTabs(),
-                const SizedBox(height: 24),
-                
-                if (_isLoading)
-                    const _FacultyMyFilesShimmer(),
+        body: Column( // Main Column to hold scrollable content and Ad
+          children: [
+            Expanded( // Scrollable content area
+              child: RefreshIndicator(
+                onRefresh: _refreshItems, 
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      _buildBreadcrumbs(),
+                      const SizedBox(height: 16),
+                      
+                      _buildSearchBar(),
+                      const SizedBox(height: 16),
+                      
+                      _buildTabs(),
+                      const SizedBox(height: 24),
+                      
+                      if (_isLoading)
+                          const _FacultyMyFilesShimmer(),
 
-                if (!_isLoading) ...[
-                  // --- Folders Section ---
-                  if (folders.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Folders'))
-                    _buildFoldersSection(folders),
-                  
-                  // --- Files Section ---
-                  if (files.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Files'))
-                    _buildFilesSection(files),
+                      if (!_isLoading) ...[
+                        // --- Folders Section ---
+                        if (folders.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Folders'))
+                          _buildFoldersSection(folders),
+                        
+                        // --- Files Section ---
+                        if (files.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Files'))
+                          _buildFilesSection(files),
 
-                  // --- Empty State ---
-                  if (filteredItems.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
-                              const SizedBox(height: 16),
-                              Text(
-                                _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.inter(color: Colors.grey[600], fontSize: 16),
+                        // --- Empty State ---
+                        if (filteredItems.isEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
+                                      textAlign: TextAlign.center,
+                                      style: GoogleFonts.inter(color: Colors.grey[600], fontSize: 16),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                ],
+                            ),
+                      ],
 
-                const SizedBox(height: 20),
-              ],
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
+            
+            // NEW: Fixed Banner Ad at the bottom
+            const BannerAdWidget(),
+          ],
         ),
       ),
     );

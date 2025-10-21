@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform; // NEW: Import dart:io for Platform check
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,6 +11,85 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // NEW: Google Mobile Ads SDK
+
+// Primary accent color from faculty_home_page for consistency
+const Color _kPrimaryColor = Color(0xFF6A67FE);
+const Color _kAccentGradientStart = Color(0xFFF0F5FF);
+const Color _kAccentGradientEnd = Color(0xFFFFFFFF);
+
+
+// --- NEW: Reusable Banner Ad Widget (Copied from faculty_home_page.dart) ---
+class BannerAdWidget extends StatefulWidget {
+  const BannerAdWidget({super.key});
+
+  @override
+  State<BannerAdWidget> createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+  
+  // Google's official TEST Ad Unit IDs for Banner Ad
+  // MUST be replaced with real IDs for production
+  final String _adUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/6300978111' 
+    : 'ca-app-pub-3940256099942544/2934735716'; 
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  void _loadAd() {
+    _bannerAd = BannerAd(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      size: AdSize.banner,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          print('BannerAd failed to load: $error');
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAdLoaded && _bannerAd != null) {
+      // Ensure the ad is properly sized when loaded
+      return Container(
+        alignment: Alignment.center,
+        width: _bannerAd!.size.width.toDouble(),
+        height: _bannerAd!.size.height.toDouble(),
+        child: AdWidget(ad: _bannerAd!),
+      );
+    } else {
+      // Show a placeholder container to prevent layout shifting
+      return const SizedBox(height: 50); 
+    }
+  }
+}
+// --- END Banner Ad Widget ---
+
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -311,129 +391,133 @@ class _StudentHomePageState extends State<StudentHomePage> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const _StudentHomePageShimmer()
-          : RefreshIndicator(
-              onRefresh: _loadInitialData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                // Adjusted horizontal padding slightly to give more room for grid items
-                padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 8),
+      // NEW: Use Column to stack scrollable content and the fixed ad banner
+      body: Column( 
+        children: [
+          Expanded( // Main content area is expanded and scrollable
+            child: _isLoading
+                ? const _StudentHomePageShimmer()
+                : RefreshIndicator(
+                    onRefresh: _loadInitialData,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      // Adjusted horizontal padding slightly to give more room for grid items
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 8),
 
-                    // --- UPDATED: Animated Greeting Text ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: RichText(
-                        // Explicitly defining the list type to accept WidgetSpan and TextSpan
-                        text: TextSpan(
-                          style: GoogleFonts.inter(fontSize: 22, color: Colors.black87),
-                          children: <InlineSpan>[ // CHANGED: Type to InlineSpan
-                            const TextSpan(text: 'Hello, '),
-                            WidgetSpan( 
-                              child: TweenAnimationBuilder<double>(
-                                tween: Tween<double>(begin: 0.9, end: 1.0),
-                                duration: const Duration(milliseconds: 700),
-                                curve: Curves.elasticOut,
-                                builder: (BuildContext context, double scale, Widget? child) {
-                                  return Transform.scale(
-                                    scale: scale,
-                                    child: Text(
-                                      _userName ?? 'Student',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.bold,
-                                        color: const Color(0xFF6A67FE), // Use the primary purple color
-                                      ),
+                          // --- UPDATED: Animated Greeting Text ---
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                            child: RichText(
+                              // Explicitly defining the list type to accept WidgetSpan and TextSpan
+                              text: TextSpan(
+                                style: GoogleFonts.inter(fontSize: 22, color: Colors.black87),
+                                children: <InlineSpan>[ // CHANGED: Type to InlineSpan
+                                  const TextSpan(text: 'Hello, '),
+                                  WidgetSpan( 
+                                    child: TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(begin: 0.9, end: 1.0),
+                                      duration: const Duration(milliseconds: 700),
+                                      curve: Curves.elasticOut,
+                                      builder: (BuildContext context, double scale, Widget? child) {
+                                        return Transform.scale(
+                                          scale: scale,
+                                          child: Text(
+                                            _userName ?? 'Student',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.bold,
+                                              color: _kPrimaryColor, // Use the primary purple color
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
+                                  ),
+                                  const TextSpan(text: '!'),
+                                ],
                               ),
                             ),
-                            const TextSpan(text: '!'),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 16),
+                          
+                          // --- Quick Access Section ---
+                          _buildSectionTitle('Quick Access', trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: _kPrimaryColor.withOpacity(0.1),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  '${quickAccessItems.length}',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: _kPrimaryColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),),
+                          const SizedBox(height: 8), // Reduced vertical spacing
+                          _buildQuickAccessGrid(quickAccessItems),
+                          const SizedBox(height: 20), // Reduced vertical spacing
+                          
+                          // --- Upcoming Events Section (Reminders) ---
+                          _buildSectionTitle('Upcoming Events', trailing: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _showAllReminders = !_showAllReminders;
+                              });
+                            },
+                            child: Text(_showAllReminders ? 'See less' : 'See all', 
+                                      style: const TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8), // Reduced vertical spacing
+                          _buildUpcomingSectionCard(),
+                          const SizedBox(height: 20), // Reduced vertical spacing
+                          
+                          // --- Recently Accessed Files Section ---
+                          _buildSectionTitle('Recently Accessed Files', trailing: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _showAllAccessed = !_showAllAccessed;
+                              });
+                            },
+                            child: Text(_showAllAccessed ? 'View less' : 'View all', 
+                                      style: const TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8), // Reduced vertical spacing
+                          _buildRecentlyAccessedGrid(),
+                          const SizedBox(height: 20), // Reduced vertical spacing
+                          
+                          // --- Recent Activity Section ---
+                          _buildSectionTitle('Recent Activity', trailing: TextButton(
+                            onPressed: () => context.push('/all_activities'),
+                            child: const Text('See details', style: TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8), // Reduced vertical spacing
+                          _buildRecentActivityList(),
+                          const SizedBox(height: 20),
+                          
+                          // Add extra padding at the bottom of the scrollable content
+                          const SizedBox(height: 10), 
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    
-                    // --- Quick Access Section ---
-                    _buildSectionTitle('Quick Access', trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${quickAccessItems.length}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF6A67FE).withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '${quickAccessItems.length}',
-                            style: GoogleFonts.inter(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFF6A67FE),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),),
-                    const SizedBox(height: 8), // Reduced vertical spacing
-                    _buildQuickAccessGrid(quickAccessItems),
-                    const SizedBox(height: 20), // Reduced vertical spacing
-                    
-                    // --- Upcoming Events Section (Reminders) ---
-                    _buildSectionTitle('Upcoming Events', trailing: TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _showAllReminders = !_showAllReminders;
-                        });
-                      },
-                      child: Text(_showAllReminders ? 'See less' : 'See all', 
-                                style: const TextStyle(color: Color(0xFF6A67FE))),
-                    )),
-                    const SizedBox(height: 8), // Reduced vertical spacing
-                    _buildUpcomingSectionCard(),
-                    const SizedBox(height: 20), // Reduced vertical spacing
-                    
-                    // --- Recently Accessed Files Section ---
-                    _buildSectionTitle('Recently Accessed Files', trailing: TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _showAllAccessed = !_showAllAccessed;
-                        });
-                      },
-                      child: Text(_showAllAccessed ? 'View less' : 'View all', 
-                                style: const TextStyle(color: Color(0xFF6A67FE))),
-                    )),
-                    const SizedBox(height: 8), // Reduced vertical spacing
-                    _buildRecentlyAccessedGrid(),
-                    const SizedBox(height: 20), // Reduced vertical spacing
-                    
-                    // --- Recent Activity Section ---
-                    _buildSectionTitle('Recent Activity', trailing: TextButton(
-                      onPressed: () => context.push('/all_activities'),
-                      child: const Text('See details', style: TextStyle(color: Color(0xFF6A67FE))),
-                    )),
-                    const SizedBox(height: 8), // Reduced vertical spacing
-                    _buildRecentActivityList(),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ),
+                  ),
+          ),
+          
+          // --- FIXED BANNER AD AT THE BOTTOM ---
+          const BannerAdWidget(),
+        ],
+      ),
     );
   }
   
@@ -518,16 +602,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
         decoration: BoxDecoration(
           // GRADIENT BACKGROUND added here for the card
           gradient: const LinearGradient(
-            colors: [
-              Color(0xFFF0F5FF), // Light gradient start
-              Color(0xFFFFFFFF), // White gradient end
-            ],
+            colors: [_kAccentGradientStart, _kAccentGradientEnd],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(16),
           // Subtle border and shadow for depth, matching the image style
-          border: Border.all(color: const Color(0xFF6A67FE).withOpacity(0.1), width: 1),
+          border: Border.all(color: _kPrimaryColor.withOpacity(0.1), width: 1),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.withOpacity(0.1),
@@ -546,10 +627,10 @@ class _StudentHomePageState extends State<StudentHomePage> {
               padding: const EdgeInsets.all(6), // Adjusted padding
               decoration: BoxDecoration(
                 // Icon background set to a solid color/opacity
-                color: const Color(0xFF6A67FE).withOpacity(0.1),
+                color: _kPrimaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, color: const Color(0xFF6A67FE), size: 20), // Icon size 20
+              child: Icon(icon, color: _kPrimaryColor, size: 20), // Icon size 20
             ),
             const SizedBox(width: 8), // Spacing between icon and text
             Expanded(
@@ -632,16 +713,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
       decoration: BoxDecoration(
         // GRADIENT BACKGROUND added here
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFFF0F5FF), // Light gradient start
-            Color(0xFFFFFFFF), // White gradient end
-          ],
+          colors: [_kAccentGradientStart, _kAccentGradientEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
         // Subtle border and shadow for depth, matching the image style
-        border: Border.all(color: const Color(0xFF6A67FE).withOpacity(0.1), width: 1),
+        border: Border.all(color: _kPrimaryColor.withOpacity(0.1), width: 1),
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.05),
@@ -659,7 +737,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
             width: 50,
             height: 50,
             decoration: BoxDecoration(
-              color: const Color(0xFF6A67FE),
+              color: _kPrimaryColor,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -837,16 +915,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
         decoration: BoxDecoration(
           // GRADIENT BACKGROUND added here
           gradient: const LinearGradient(
-            colors: [
-              Color(0xFFF0F5FF), // Light gradient start
-              Color(0xFFFFFFFF), // White gradient end
-            ],
+            colors: [_kAccentGradientStart, _kAccentGradientEnd],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(16),
           // Subtle border and shadow for depth, matching the image style
-          border: Border.all(color: const Color(0xFF6A67FE).withOpacity(0.1), width: 1),
+          border: Border.all(color: _kPrimaryColor.withOpacity(0.1), width: 1),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.withOpacity(0.05),
@@ -863,10 +938,10 @@ class _StudentHomePageState extends State<StudentHomePage> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFF6A67FE).withOpacity(0.1),
+                color: _kPrimaryColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(_getFileIcon(itemType), size: 30, color: const Color(0xFF6A67FE)),
+              child: Icon(_getFileIcon(itemType), size: 30, color: _kPrimaryColor),
             ),
             const SizedBox(height: 12),
             Text(
@@ -958,7 +1033,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final Widget activityText = _buildActivityRichText(action, details);
     final IconData icon = _getIconForActivity(action);
     // FIXED: Force icon color to the primary blue/purple for all activities, including star
-    const Color iconColor = Color(0xFF6A67FE);
+    const Color iconColor = _kPrimaryColor;
 
 
     return Container(
@@ -968,16 +1043,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
       decoration: BoxDecoration(
         // GRADIENT BACKGROUND added here
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFFF0F5FF), // Light gradient start
-            Color(0xFFFFFFFF), // White gradient end
-          ],
+          colors: [_kAccentGradientStart, _kAccentGradientEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
         // Subtle border and shadow for depth, matching the image style
-        border: Border.all(color: const Color(0xFF6A67FE).withOpacity(0.1), width: 1),
+        border: Border.all(color: _kPrimaryColor.withOpacity(0.1), width: 1),
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.05),
@@ -1304,6 +1376,9 @@ class _StudentHomePageShimmer extends StatelessWidget {
               ]),
             ),
             const SizedBox(height: 20),
+            
+            // 10. Ad Placeholder in the loading state
+            const SizedBox(height: 50),
           ],
         ),
       ),

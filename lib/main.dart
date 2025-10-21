@@ -42,11 +42,14 @@ import 'package:grademate/widgets/favorites_page.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
-import 'package:firebase_messaging/firebase_messaging.dart'; // [NEW IMPORT]
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // [NEW IMPORT]
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:grademate/pages/Student/job_updates_page.dart';
 import 'package:grademate/pages/Student/student_chat_page.dart';
 import 'package:grademate/pages/Student/student_assignment_page.dart';
+// [NEW ADMOB IMPORT]
+import 'package:google_mobile_ads/google_mobile_ads.dart'; 
+
 
 // [NEW FCM BACKGROUND HANDLER]
 /// Must be a top-level function, cannot be a method of a class.
@@ -369,7 +372,12 @@ Future<void> _setupFCM() async {
 void main() async {
   await dotenv.load(fileName: ".env");
 
+  // --- START ADMOB INITIALIZATION ---
   WidgetsFlutterBinding.ensureInitialized();
+  // 1. Initialize the Google Mobile Ads SDK (Required for banner/interstitial)
+  MobileAds.instance.initialize(); 
+  // --- END ADMOB INITIALIZATION ---
+
   await _requestPermissions();
 
   tz.initializeTimeZones();

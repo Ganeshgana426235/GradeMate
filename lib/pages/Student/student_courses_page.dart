@@ -15,7 +15,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:intl/intl.dart'; 
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart'; // ADDED: Firebase Storage import
+import 'package:firebase_storage/firebase_storage.dart'; 
+// AD IMPORTS START
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+// AD IMPORTS END
 
 // Defined the new primary color based on the user's image
 const Color _kPrimaryColor = Color(0xFF6A67FE);
@@ -32,7 +35,7 @@ class StudentCoursesPage extends StatefulWidget {
 class _StudentCoursesPageState extends State<StudentCoursesPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance; // ADDED: Storage instance
+  final FirebaseStorage _storage = FirebaseStorage.instance; 
   late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
   String? _collegeId;
@@ -50,25 +53,145 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   String _currentFilter = 'All'; 
   
   List<Map<String, dynamic>> _recentlyAccessedItems = [];
-  Set<String> _favoriteFilePaths = {}; // NEW: Set to store favorite paths
+  Set<String> _favoriteFilePaths = {}; 
 
   List<String> _breadcrumbs = ['Courses']; 
   bool _isFirstLoad = true;
 
   final TextEditingController _searchController = TextEditingController();
+  
+  // AD VARS START
+  InterstitialAd? _interstitialAd;
+  RewardedAd? _rewardedAd;
+  final String _interstitialAdUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/1033173712' // Android Test ID
+    : 'ca-app-pub-3940256099942544/4411468910'; // iOS Test ID
+  final String _rewardedAdUnitId = Platform.isAndroid
+      ? 'ca-app-pub-3940256099942544/5224354917' // Android Test ID
+      : 'ca-app-pub-3940256099942544/1712485313'; // iOS Test ID
+  // AD VARS END
 
   @override
   void initState() {
     super.initState();
     _initializeNotifications();
     _loadInitialData();
+    // AD INIT START
+    _loadInterstitialAd();
+    _loadRewardedAd();
+    // AD INIT END
   }
   
   @override
   void dispose() {
     _searchController.dispose(); 
+    // AD DISPOSE START
+    _interstitialAd?.dispose();
+    _rewardedAd?.dispose();
+    // AD DISPOSE END
     super.dispose();
   }
+  
+  // AD METHODS START
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: _interstitialAdUnitId,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+          ad.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (ad) {
+              ad.dispose();
+              _loadInterstitialAd(); // Load the next ad
+            },
+            onAdFailedToShowFullScreenContent: (ad, error) {
+              ad.dispose();
+              _loadInterstitialAd(); 
+              print('Interstitial ad failed to show: $error');
+            },
+          );
+        },
+        onAdFailedToLoad: (error) {
+          print('InterstitialAd failed to load: $error');
+          _interstitialAd = null;
+        },
+      ),
+    );
+  }
+
+  void _showInterstitialAd(Function onDismissed) {
+    if (_interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadInterstitialAd();
+          onDismissed(); // Execute the original action after ad dismissal
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _loadInterstitialAd(); 
+          onDismissed(); // Execute the original action if ad fails to show
+        },
+      );
+      _interstitialAd!.show();
+    } else {
+      // If ad is not ready, execute the action immediately
+      onDismissed();
+    }
+  }
+
+  void _loadRewardedAd() {
+    RewardedAd.load(
+      adUnitId: _rewardedAdUnitId,
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          _rewardedAd = ad;
+          ad.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (ad) {
+              ad.dispose();
+              _loadRewardedAd();
+            },
+            onAdFailedToShowFullScreenContent: (ad, error) {
+              ad.dispose();
+              _loadRewardedAd();
+              print('Rewarded ad failed to show: $error');
+            },
+          );
+        },
+        onAdFailedToLoad: (error) {
+          print('RewardedAd failed to load: $error');
+          _rewardedAd = null;
+        },
+      ),
+    );
+  }
+
+  void _showRewardedAd(Function onRewardGranted) {
+    if (_rewardedAd != null) {
+      _rewardedAd!.show(onUserEarnedReward: (ad, reward) {
+        onRewardGranted(); // Execute the core download logic
+        _showSnackbar('Reward granted! Download started.', success: true);
+        _loadRewardedAd(); // Load next ad
+      });
+      _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+           ad.dispose();
+           _loadRewardedAd();
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _loadRewardedAd();
+          _showSnackbar('Ad failed to load. Please try again.', success: false);
+        },
+      );
+    } else {
+      // If ad is not ready, prompt the user to try again
+      _showSnackbar('Ad is not ready. Please wait a moment and try the download again.', success: false);
+    }
+  }
+  // AD METHODS END
   
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
@@ -451,6 +574,10 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 child:
                     isViewingFiles ? _buildFilesView() : _buildCoursesView(),
               ),
+              
+              // AD BANNER START: Anchored to the bottom of the body
+              const BannerAdWidget(),
+              // AD BANNER END
             ],
           ),
         ),
@@ -944,14 +1071,15 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 return Padding(
                   padding: const EdgeInsets.only(right: 12.0),
                   child: InkWell(
-                    onTap: () {
+                    // AD INTERSTITIAL: Show ad before opening file/link
+                    onTap: () => _showInterstitialAd(() {
                       _updateRecentlyAccessed(docPath);
                       if (fileType == 'link') {
                         _openExternalUrl(item['url']);
                       } else {
                          context.push('/file_viewer', extra: _createFileObjectFromMap(item));
                       }
-                    },
+                    }),
                     child: Container(
                       width: 100,
                       decoration: BoxDecoration(
@@ -1013,14 +1141,15 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                   return Padding(
                     padding: const EdgeInsets.only(right: 12.0),
                     child: InkWell(
-                      onTap: () {
+                      // AD INTERSTITIAL: Show ad before opening file/link
+                      onTap: () => _showInterstitialAd(() {
                         _updateRecentlyAccessed(docPath);
                         if (fileType == 'link') {
                           _openExternalUrl(item['url']);
                         } else {
                            context.push('/file_viewer', extra: _createFileObjectFromMap(item));
                         }
-                      },
+                      }),
                       child: Container(
                         width: 100,
                         decoration: BoxDecoration(
@@ -1298,9 +1427,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       );
     }
 
+    // MODIFIED: Open File logic now calls interstitial ad
     void openFile() {
-      _updateRecentlyAccessed(docPath);
-      context.push('/file_viewer', extra: createFileObject());
+      _showInterstitialAd(() {
+        _updateRecentlyAccessed(docPath);
+        context.push('/file_viewer', extra: createFileObject());
+      });
     }
 
     return Card(
@@ -1373,8 +1505,11 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
 
 
     void openLink() {
-      _updateRecentlyAccessed(docPath);
-      _openExternalUrl(url);
+      // MODIFIED: Open Link logic now calls interstitial ad
+      _showInterstitialAd(() {
+        _updateRecentlyAccessed(docPath);
+        _openExternalUrl(url);
+      });
     }
 
     FileData createLinkObject() {
@@ -1444,7 +1579,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                   if (value == 'open_external') {
                     openLink();
                   } else if (value == 'add_to_favorites') {
-                    _addToFavorites(doc);
+                    _toggleFavorite(doc); // Use toggle
                   } else if (value == 'share') {
                     Share.share('Check out this link: $url');
                   } else if (value == 'details') {
@@ -1453,7 +1588,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 },
                 itemBuilder: (context) => [
                   const PopupMenuItem(value: 'open_external', child: Text('Open in Browser')),
-                  const PopupMenuItem(value: 'add_to_favorites', child: Text('Add to favorites')),
+                  PopupMenuItem(value: 'add_to_favorites', child: Text(isFavorite ? 'Remove from favorites' : 'Add to favorites')),
                   const PopupMenuItem(value: 'share', child: Text('Share')),
                   const PopupMenuItem(value: 'details', child: Text('File details')),
                 ],
@@ -1556,8 +1691,11 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     };
     
     if (value == 'open') {
-      _updateRecentlyAccessed(docPath);
-      context.push('/file_viewer', extra: fileObject);
+      // AD INTERSTITIAL: Show ad before opening file
+      _showInterstitialAd(() {
+        _updateRecentlyAccessed(docPath);
+        context.push('/file_viewer', extra: fileObject);
+      });
     } else if (value == 'ask_ai') {
       context.push('/student_ai', extra: fileObject);
     } else if (value == 'toggle_favorite') {
@@ -1567,14 +1705,16 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       await _logActivity(action, activityDetails);
       
     } else if (value == 'download') {
-      await _downloadFile(doc);
-      // Log the action
-      await _logActivity('Downloaded File', activityDetails);
+      // AD REWARDED: Show rewarded ad before downloading file
+      _showRewardedAd(() => _downloadFile(doc));
+      // Log the action (After ad dismissal/reward grant)
+      await _logActivity('Requested Download', activityDetails);
 
     } else if (value == 'share') {
-      await _shareFile(doc);
-      // Log the action
-      await _logActivity('Shared File', activityDetails);
+      // AD REWARDED: Show rewarded ad before sharing file (Standard monetization: download/share cost an ad)
+      _showRewardedAd(() => _shareFile(doc));
+      // Log the action (After ad dismissal/reward grant)
+      await _logActivity('Requested Share', activityDetails);
     } else if (value == 'reminder') {
       // NEW: Show the reminder dialog for the file
       _showAddReminderDialogForFile(fileObject);
@@ -1990,6 +2130,8 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       // await _showCompletionNotification('Download Complete', fileName, 2);
       
       if (!mounted) return;
+      // The reward ad closure will show the "Download started" snackbar. 
+      // This snackbar is for the completion notification.
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('File saved to GradeMate folder!'),
         backgroundColor: Colors.green,
@@ -2036,6 +2178,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
 
       await Share.shareXFiles([XFile(tempFilePath)],
           text: 'Check out this file from GradeMate: $fileName');
+          
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2102,6 +2245,90 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     );
   }
 }
+
+// ----------------------------------------------------------------------
+// AD WIDGETS (Included here for completeness and the necessary fix)
+// ----------------------------------------------------------------------
+
+class BannerAdWidget extends StatefulWidget {
+  const BannerAdWidget({super.key});
+
+  @override
+  State<BannerAdWidget> createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+  bool _adLoadedCalled = false; // Flag to ensure single load after context is available
+  
+  final String _adUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/6300978111' 
+    : 'ca-app-pub-3940256099942544/2934735716'; 
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_adLoadedCalled) {
+      _loadAd();
+      _adLoadedCalled = true; 
+    }
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  void _loadAd() {
+    // Accessing MediaQuery.of(context) is safe here in didChangeDependencies.
+    final adSize = AdSize.getCurrentOrientationInlineAdaptiveBannerAdSize(
+        MediaQuery.of(context).size.width.toInt());
+        
+    _bannerAd = BannerAd(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      size: adSize,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          print('BannerAd failed to load: $error');
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAdLoaded && _bannerAd != null) {
+      return Container(
+        alignment: Alignment.center,
+        width: _bannerAd!.size.width.toDouble(),
+        height: _bannerAd!.size.height.toDouble(),
+        child: AdWidget(ad: _bannerAd!),
+      );
+    } else {
+      // Show a placeholder container to reserve space
+      return const SizedBox(height: 50); 
+    }
+  }
+}
+
 
 // ----------------------------------------------------------------------
 // SHIMMER EFFECT WIDGETS

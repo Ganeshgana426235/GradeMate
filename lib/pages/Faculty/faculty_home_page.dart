@@ -1,5 +1,5 @@
 import 'dart:convert';
-
+import 'dart:io' show Platform; // Import dart:io for Platform check
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -10,11 +10,84 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // NEW: Google Mobile Ads SDK
 
 // Primary accent color from student_home_page
 const Color _kPrimaryColor = Color(0xFF6A67FE);
 const Color _kAccentGradientStart = Color(0xFFF0F5FF);
 const Color _kAccentGradientEnd = Color(0xFFFFFFFF);
+
+// --- NEW: Reusable Banner Ad Widget ---
+class BannerAdWidget extends StatefulWidget {
+  const BannerAdWidget({super.key});
+
+  @override
+  State<BannerAdWidget> createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+  
+  // Google's official TEST Ad Unit IDs for Banner Ad
+  // MUST be replaced with real IDs for production
+  final String _adUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/6300978111' 
+    : 'ca-app-pub-3940256099942544/2934735716'; 
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  void _loadAd() {
+    _bannerAd = BannerAd(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      size: AdSize.banner,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          print('BannerAd failed to load: $error');
+        },
+      ),
+    )..load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAdLoaded && _bannerAd != null) {
+      // Ensure the ad is properly sized when loaded
+      return Container(
+        alignment: Alignment.center,
+        width: _bannerAd!.size.width.toDouble(),
+        height: _bannerAd!.size.height.toDouble(),
+        child: AdWidget(ad: _bannerAd!),
+      );
+    } else {
+      // Show a placeholder container to prevent layout shifting
+      return const SizedBox(height: 50); 
+    }
+  }
+}
+// --- END Banner Ad Widget ---
+
 
 class FacultyHomePage extends StatefulWidget {
   const FacultyHomePage({super.key});
@@ -27,22 +100,19 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   String? _userName;
   bool _isLoading = true;
   List<Map<String, dynamic>> _activities = [];
-  // For faculty, we'll keep the list limited for simplicity on the home screen.
   List<Map<String, dynamic>> _recentlyAccessedItems = [];
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // State flags for expanding/collapsing sections (Matching student_home_page structure)
   bool _showAllReminders = false;
   bool _showAllAccessed = false;
-  // Note: For Faculty, _loadUpcomingReminders is currently limited to 3 items in the query.
-  // We will change the query to load all, similar to the student page, for 'See All' functionality.
-  List<Map<String, dynamic>> _allReminders = []; // Changed to store all for 'See All'
+  List<Map<String, dynamic>> _allReminders = [];
 
   @override
   void initState() {
     super.initState();
+    // CRITICAL: Ensure MobileAds is initialized in main() before this
     _loadInitialData();
   }
 
@@ -83,7 +153,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   Future<void> _loadActivitiesFromCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final cachedActivities = prefs.getString('faculty_recent_activities'); // Updated cache key
+      final cachedActivities = prefs.getString('faculty_recent_activities');
       if (cachedActivities != null) {
         if (mounted) {
           setState(() {
@@ -128,7 +198,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
-          'faculty_recent_activities', json.encode(firestoreActivities)); // Updated cache key
+          'faculty_recent_activities', json.encode(firestoreActivities));
     } catch (e) {
       print("Error fetching activities from Firestore: $e");
     }
@@ -140,7 +210,6 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
 
     try {
       final now = Timestamp.now();
-      // Fetch ALL upcoming reminders to allow for expansion
       final snapshot = await _firestore
           .collection('users')
           .doc(user.email)
@@ -157,7 +226,6 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
       if (mounted) {
         setState(() {
           _allReminders = allUpcoming;
-          // Use the allReminders list for display logic now
         });
       }
     } catch (e) {
@@ -183,7 +251,6 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
     List<Map<String, dynamic>> validItems = [];
     List<String> invalidPaths = [];
 
-    // Fetches all recently accessed items
     for (String path in paths) {
       try {
         final fileDoc = await _firestore.doc(path).get();
@@ -252,15 +319,14 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // Quick Access items, matching student_home_page style and adding new routes
     final List<Map<String, dynamic>> quickAccessItems = [
       {'icon': Icons.assignment_outlined, 'label': 'Assignments', 'route': '/faculty_assignments'},
       {'icon': Icons.download_outlined, 'label': 'Downloads', 'route': '/downloads'},
       {'icon': Icons.note_alt_outlined, 'label': 'My Notes', 'route': '/my_notes'},
-      {'icon': Icons.notifications_active_outlined, 'label': 'Reminders', 'route': '/reminders'}, // Changed icon
+      {'icon': Icons.notifications_active_outlined, 'label': 'Reminders', 'route': '/reminders'},
       {'icon': Icons.favorite_border_outlined, 'label': 'Favorites', 'route': '/favorites'},
-      {'icon': Icons.business_center_outlined, 'label': 'Job Updates', 'route': '/job_updates'}, // New item
-      {'icon': Icons.chat, 'label': 'Connect', 'route': '/faculty_chat'}, // New item
+      {'icon': Icons.business_center_outlined, 'label': 'Job Updates', 'route': '/job_updates'},
+      {'icon': Icons.chat, 'label': 'Connect', 'route': '/faculty_chat'},
     ];
 
     return Scaffold(
@@ -294,7 +360,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
                       top: 8,
                       child: Container(
                         padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(color: _kPrimaryColor, borderRadius: BorderRadius.circular(10)), // Primary color for badge
+                        decoration: BoxDecoration(color: _kPrimaryColor, borderRadius: BorderRadius.circular(10)),
                         constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                         child: Text(
                           '$count',
@@ -309,118 +375,131 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const _FacultyHomeShimmer()
-          : RefreshIndicator(
-              onRefresh: _loadInitialData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 12.0), // Reduced padding
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 8),
+      // NEW: Use Column to stack scrollable content and the fixed ad banner
+      body: Column( 
+        children: [
+          Expanded( // Main content area is expanded and scrollable
+            child: _isLoading
+                ? const _FacultyHomeShimmer()
+                : RefreshIndicator(
+                    onRefresh: _loadInitialData,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 8),
 
-                    // --- Animated Greeting Text (Matching Student style) ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: RichText(
-                        text: TextSpan(
-                          style: GoogleFonts.inter(fontSize: 22, color: Colors.black87),
-                          children: <InlineSpan>[
-                            const TextSpan(text: 'Hello, '),
-                            WidgetSpan( 
-                              child: TweenAnimationBuilder<double>(
-                                tween: Tween<double>(begin: 0.9, end: 1.0),
-                                duration: const Duration(milliseconds: 700),
-                                curve: Curves.elasticOut,
-                                builder: (BuildContext context, double scale, Widget? child) {
-                                  return Transform.scale(
-                                    scale: scale,
-                                    child: Text(
-                                      _userName ?? 'Faculty',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.bold,
-                                        color: _kPrimaryColor,
-                                      ),
+                          // --- Animated Greeting Text ---
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                            child: RichText(
+                              text: TextSpan(
+                                style: GoogleFonts.inter(fontSize: 22, color: Colors.black87),
+                                children: <InlineSpan>[
+                                  const TextSpan(text: 'Hello, '),
+                                  WidgetSpan( 
+                                    child: TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(begin: 0.9, end: 1.0),
+                                      duration: const Duration(milliseconds: 700),
+                                      curve: Curves.elasticOut,
+                                      builder: (BuildContext context, double scale, Widget? child) {
+                                        return Transform.scale(
+                                          scale: scale,
+                                          child: Text(
+                                            _userName ?? 'Faculty',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.bold,
+                                              color: _kPrimaryColor,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
+                                  ),
+                                  const TextSpan(text: '!'),
+                                ],
                               ),
                             ),
-                            const TextSpan(text: '!'),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // --- Quick Access Section ---
+                          _buildSectionTitle('Quick Access', trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: _kPrimaryColor.withOpacity(0.1),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  '${quickAccessItems.length}',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: _kPrimaryColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),),
+                          const SizedBox(height: 8),
+                          _buildQuickAccessGrid(quickAccessItems),
+                          const SizedBox(height: 20),
+
+                          // --- Upcoming Events Section (Reminders) ---
+                          _buildSectionTitle('Upcoming Events', trailing: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _showAllReminders = !_showAllReminders;
+                              });
+                            },
+                            child: Text(_showAllReminders ? 'See less' : 'See all', 
+                                      style: const TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8),
+                          _buildUpcomingSectionCard(),
+                          const SizedBox(height: 20),
+                          
+                          // --- Recently Accessed Files Section ---
+                          _buildSectionTitle('Recently Accessed Files', trailing: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _showAllAccessed = !_showAllAccessed;
+                              });
+                            },
+                            child: Text(_showAllAccessed ? 'View less' : 'View all', 
+                                      style: const TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8),
+                          _buildRecentlyAccessedGrid(),
+                          const SizedBox(height: 20),
+                          
+                          // --- Recent Activity Section ---
+                          _buildSectionTitle('Recent Activity', trailing: TextButton(
+                            onPressed: () => context.push('/all_activities'),
+                            child: const Text('See details', style: TextStyle(color: _kPrimaryColor)),
+                          )),
+                          const SizedBox(height: 8),
+                          _buildRecentActivityList(),
+                          const SizedBox(height: 20),
+                          
+                          // Add extra padding at the bottom of the scrollable content
+                          const SizedBox(height: 10), 
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-
-                    // --- Quick Access Section ---
-                    _buildSectionTitle('Quick Access', trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: _kPrimaryColor.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '${quickAccessItems.length}',
-                            style: GoogleFonts.inter(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: _kPrimaryColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),),
-                    const SizedBox(height: 8),
-                    _buildQuickAccessGrid(quickAccessItems),
-                    const SizedBox(height: 20),
-
-                    // --- Upcoming Events Section (Reminders) ---
-                    _buildSectionTitle('Upcoming Events', trailing: TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _showAllReminders = !_showAllReminders;
-                        });
-                      },
-                      child: Text(_showAllReminders ? 'See less' : 'See all', 
-                                style: const TextStyle(color: _kPrimaryColor)),
-                    )),
-                    const SizedBox(height: 8),
-                    _buildUpcomingSectionCard(),
-                    const SizedBox(height: 20),
-                    
-                    // --- Recently Accessed Files Section ---
-                    _buildSectionTitle('Recently Accessed Files', trailing: TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _showAllAccessed = !_showAllAccessed;
-                        });
-                      },
-                      child: Text(_showAllAccessed ? 'View less' : 'View all', 
-                                style: const TextStyle(color: _kPrimaryColor)),
-                    )),
-                    const SizedBox(height: 8),
-                    _buildRecentlyAccessedGrid(), // Changed to grid
-                    const SizedBox(height: 20),
-                    
-                    // --- Recent Activity Section ---
-                    _buildSectionTitle('Recent Activity', trailing: TextButton(
-                      onPressed: () => context.push('/all_activities'),
-                      child: const Text('See details', style: TextStyle(color: _kPrimaryColor)),
-                    )),
-                    const SizedBox(height: 8),
-                    _buildRecentActivityList(),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ),
+                  ),
+          ),
+          
+          // --- FIXED BANNER AD AT THE BOTTOM ---
+          const BannerAdWidget(),
+        ],
+      ),
     );
   }
 
@@ -549,7 +628,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   Widget _buildUpcomingSectionCard() {
     final displayReminders = _showAllReminders 
         ? _allReminders 
-        : _allReminders.take(3).toList(); // Show max 3 or all
+        : _allReminders.take(3).toList();
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -587,7 +666,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
                 return _buildUpcomingEventTile(
                     reminder['title'] ?? 'Upcoming Event',
                     reminderTime,
-                    index == displayReminders.length - 1 // isLast
+                    index == displayReminders.length - 1
                 );
               },
             ),
@@ -688,7 +767,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
   Widget _buildRecentlyAccessedGrid() {
     final displayItems = _showAllAccessed
         ? _recentlyAccessedItems 
-        : _recentlyAccessedItems.take(6).toList(); // Show max 6 or all
+        : _recentlyAccessedItems.take(6).toList();
     
     if (displayItems.isEmpty) {
       return Container(
@@ -1051,7 +1130,7 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
       case 'png': case 'gif': return Icons.image_outlined;
       case 'zip': case 'rar': return Icons.folder_zip_outlined;
       case 'link': return Icons.link;
-      case 'md': return Icons.article_outlined; // Added for completeness
+      case 'md': return Icons.article_outlined;
       default: return Icons.insert_drive_file_outlined;
     }
   }
@@ -1089,7 +1168,6 @@ class _FacultyHomePageState extends State<FacultyHomePage> {
 class _FacultyHomeShimmer extends StatelessWidget {
   const _FacultyHomeShimmer();
   
-  // Placeholder for Section Title
   Widget _buildShimmerSectionTitle({bool showTrailing = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
@@ -1103,7 +1181,6 @@ class _FacultyHomeShimmer extends StatelessWidget {
     );
   }
 
-  // Placeholder for Upcoming Event
   Widget _buildUpcomingPlaceholder() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1137,7 +1214,6 @@ class _FacultyHomeShimmer extends StatelessWidget {
     );
   }
 
-  // Placeholder for Recent Activity Items
   Widget _buildActivityPlaceholder() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1174,18 +1250,15 @@ class _FacultyHomeShimmer extends StatelessWidget {
           children: [
             const SizedBox(height: 8),
 
-            // 1. Greeting Placeholder
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: Container(height: 22, width: 180, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4))),
             ),
             const SizedBox(height: 16),
             
-            // 2. Quick Access Title Placeholder
             _buildShimmerSectionTitle(),
             const SizedBox(height: 8),
 
-            // 3. Quick Access Grid Placeholder
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1214,11 +1287,9 @@ class _FacultyHomeShimmer extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // 4. Upcoming Events Title Placeholder
             _buildShimmerSectionTitle(showTrailing: true),
             const SizedBox(height: 8),
 
-            // 5. Upcoming List Placeholder
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -1233,11 +1304,9 @@ class _FacultyHomeShimmer extends StatelessWidget {
             ),
             const SizedBox(height: 24),
 
-            // 6. Recently Accessed Title Placeholder
             _buildShimmerSectionTitle(showTrailing: true),
             const SizedBox(height: 8),
 
-            // 7. Recently Accessed Grid Placeholder
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -1251,7 +1320,7 @@ class _FacultyHomeShimmer extends StatelessWidget {
                   mainAxisSpacing: 12,
                   childAspectRatio: 1.1,
                 ),
-                itemCount: 4, // Show 4 for a quick snapshot
+                itemCount: 4,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemBuilder: (context, index) {
@@ -1278,11 +1347,9 @@ class _FacultyHomeShimmer extends StatelessWidget {
             ),
             const SizedBox(height: 24),
 
-            // 8. Recent Activity Title/Button Placeholder
             _buildShimmerSectionTitle(showTrailing: true),
             const SizedBox(height: 8),
 
-            // 9. Recent Activity List Placeholder
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

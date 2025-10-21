@@ -20,7 +20,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart'; // Required for reminder dialog
+import 'package:intl/intl.dart'; 
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:grademate/ads/ad_banner_widget.dart'; // Import the BannerAdWidget
 
 class StudentMyFilesPage extends StatefulWidget {
   final String? folderId;
@@ -67,6 +69,14 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
   // Used to build the breadcrumbs by holding all folder metadata
   StreamSubscription<QuerySnapshot>? _allFoldersSubscription; 
 
+  // AD VARS START
+  InterstitialAd? _interstitialAd;
+  final String _interstitialAdUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/1033173712' // Android Test ID
+    : 'ca-app-pub-3940256099942544/4411468910'; // iOS Test ID
+  // AD VARS END
+
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +85,9 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
     _initializeNotifications();
     _searchController.addListener(_onSearchChanged);
     _loadInitialData();
+    // AD INIT START
+    _loadInterstitialAd();
+    // AD INIT END
   }
 
   @override
@@ -85,8 +98,71 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
     _filesSubscription?.cancel();
     _foldersSubscription?.cancel();
     _allFoldersSubscription?.cancel();
+    // AD DISPOSE START
+    _interstitialAd?.dispose();
+    // AD DISPOSE END
     super.dispose();
   }
+  
+  // AD METHODS START
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: _interstitialAdUnitId,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+          ad.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (ad) {
+              ad.dispose();
+              _loadInterstitialAd(); // Load the next ad
+            },
+            onAdFailedToShowFullScreenContent: (ad, error) {
+              ad.dispose();
+              _loadInterstitialAd(); // Load the next ad
+              print('Interstitial ad failed to show: $error');
+            },
+          );
+        },
+        onAdFailedToLoad: (error) {
+          print('InterstitialAd failed to load: $error');
+          _interstitialAd = null;
+        },
+      ),
+    );
+  }
+
+  // AD METHOD MODIFIED: Added actionType for the snackbar message
+  void _showInterstitialAd(Function onAction, String actionType) {
+    // Helper function to execute the action and show the final message
+    void _completeAction() {
+      onAction();
+      // Show the requested completion message here
+      // The wording "Download started successfully!" is used as download/share is async
+      _showSnackbar('${actionType} started successfully!');
+    }
+
+    if (_interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadInterstitialAd(); // Load the next ad
+          _completeAction(); // Execute the original action after ad dismissal
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _loadInterstitialAd(); // Load the next ad
+          print('Interstitial ad failed to show: $error');
+          _completeAction(); // Execute the original action if ad fails to show
+        },
+      );
+      _interstitialAd!.show();
+    } else {
+      // If ad is not ready, execute the action immediately
+      _completeAction();
+    }
+  }
+  // AD METHODS END
 
   Future<void> _loadInitialData() async {
     await _loadUserData(); 
@@ -355,12 +431,13 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
     );
   }
 
+  // FIXED: Changed notification title/text to reflect "Download Complete"
   Future<void> _showCompletionNotification(String fileName) async {
-    await flutterLocalNotificationsPlugin.cancel(2);
+    await flutterLocalNotificationsPlugin.cancel(0); // Cancel the download progress notification (ID 0)
     const AndroidNotificationDetails androidPlatformChannelSpecifics =
         AndroidNotificationDetails(
       'download_completion_channel_id',
-      'Download Complete',
+      'Download Complete', // FIXED: Title changed
       channelDescription: 'Notifies when a download is finished',
       importance: Importance.high,
       priority: Priority.high,
@@ -368,7 +445,7 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
     final NotificationDetails platformChannelSpecifics =
         NotificationDetails(android: androidPlatformChannelSpecifics);
     await flutterLocalNotificationsPlugin.show(
-      3, 'Upload Complete', 'The file "$fileName" has been uploaded successfully.', platformChannelSpecifics,
+      3, 'Download Complete', 'The file "$fileName" has been downloaded successfully.', platformChannelSpecifics, // FIXED: Text changed
     );
   }
   
@@ -916,59 +993,71 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
         appBar: _isSelectionMode ? _buildSelectionAppBar() : _buildNormalAppBar(),
         body: RefreshIndicator(
           onRefresh: _refreshItems, 
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 8),
-                _buildBreadcrumbs(),
-                const SizedBox(height: 16),
-                
-                // --- Search Bar ---
-                _buildSearchBar(),
-                const SizedBox(height: 16),
-                
-                // --- Tabs (Width Fix Applied Here) ---
-                _buildTabs(),
-                const SizedBox(height: 24),
-                
-                // --- Folders Section (Dynamic View) ---
-                if (folders.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Folders'))
-                  _buildFoldersSection(folders),
-                
-                // --- Files Section (List View) ---
-                if (files.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Files'))
-                  _buildFilesSection(files),
+          // FIX 2: Moved Column outside of RefreshIndicator to place Banner Ad correctly.
+          child: Column( 
+            children: [
+              // Use Expanded to make the scrollable content take the remaining height
+              Expanded(
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      _buildBreadcrumbs(),
+                      const SizedBox(height: 16),
+                      
+                      // --- Search Bar ---
+                      _buildSearchBar(),
+                      const SizedBox(height: 16),
+                      
+                      // --- Tabs (Width Fix Applied Here) ---
+                      _buildTabs(),
+                      const SizedBox(height: 24),
+                      
+                      // --- Folders Section (Dynamic View) ---
+                      if (folders.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Folders'))
+                        _buildFoldersSection(folders),
+                      
+                      // --- Files Section (List View) ---
+                      if (files.isNotEmpty && (_searchTab == 'All' || _searchTab == 'Files'))
+                        _buildFilesSection(files),
 
-                // --- Empty State ---
-                if (filteredItems.isEmpty && !_isLoading)
-                   Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
-                            const SizedBox(height: 16),
-                            Text(
-                              _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                      // --- Empty State ---
+                      if (filteredItems.isEmpty && !_isLoading)
+                         Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24.0),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(_searchQuery.isNotEmpty ? Icons.search_off : Icons.folder_open, size: 64, color: Colors.grey[400]),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    _searchQuery.isEmpty ? 'No files or folders here.\nTap the + button to create one.' : 'No results found for "$_searchQuery"',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                
-                // --- Shimmer Loading ---
-                if (_isLoading)
-                    const _MyFilesShimmer(),
-                
-                const SizedBox(height: 20),
-              ],
-            ),
+                          ),
+                      
+                      // --- Shimmer Loading ---
+                      if (_isLoading)
+                          const _MyFilesShimmer(),
+                      
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // AD BANNER START: This is now correctly anchored to the bottom
+              const BannerAdWidget(),
+              // AD BANNER END
+            ],
           ),
         ),
       ),
@@ -1311,7 +1400,8 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
                   // Download Action
                   if (file.type != 'link')
                     GestureDetector(
-                      onTap: () => _downloadFile(file),
+                      // AD INTERSTITIAL: Call show interstitial ad
+                      onTap: () => _showInterstitialAd(() => _downloadFile(file), 'Download'),
                       child: const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 4.0),
                         child: Icon(Icons.download_outlined, color: Colors.grey, size: 24),
@@ -1362,9 +1452,11 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
         } else if (value == 'view' && fileData != null) {
           _openFile(fileData);
         } else if (value == 'download' && fileData != null) {
-          _downloadFile(fileData);
+          // AD INTERSTITIAL: Call show interstitial ad
+          _showInterstitialAd(() => _downloadFile(fileData), 'Download');
         } else if (value == 'share' && fileData != null) {
-          _shareFile(fileData);
+          // AD INTERSTITIAL: Call show interstitial ad
+          _showInterstitialAd(() => _shareFile(fileData), 'Share');
         } else if (value == 'favorite' && fileData != null) {
           _toggleFavorite(fileData);
         } else if (value == 'reminder' && fileData != null) {
@@ -1446,6 +1538,7 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
   }
 
   Future<void> _downloadFile(FileData file) async {
+    // This is the function executed AFTER the ad is dismissed
     if (file.type == 'link') {
       _showSnackbar("Cannot download a link.", success: false);
       return;
@@ -1472,13 +1565,14 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
         },
       );
       await _showCompletionNotification(file.name);
-      _showSnackbar('File downloaded successfully to the GradeMate folder!');
+      // Removed the final success snackbar here, as it's handled in _showInterstitialAd's _completeAction
     } catch (e) {
       _showSnackbar('Error during download: ${e.toString()}', success: false);
     }
   }
 
   Future<void> _shareFile(FileData file) async {
+    // This is the function executed AFTER the ad is dismissed
     if (!await _isConnected()) return;
     try {
        if (file.type == 'link') {
@@ -1491,6 +1585,7 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
       _showSnackbar('Preparing file for sharing...');
       await dio.download(file.url, tempFilePath);
       await Share.shareXFiles([XFile(tempFilePath)], text: 'Check out this file from GradeMate: ${file.name}');
+      // Removed the final success snackbar here, as it's handled in _showInterstitialAd's _completeAction
     } catch (e) {
       _showSnackbar('Failed to share file: ${e.toString()}', success: false);
     }

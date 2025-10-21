@@ -17,6 +17,12 @@
         android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true">
 
+        <!-- START: REQUIRED FOR GOOGLE MOBILE ADS (ADMOB) -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/> 
+        <!-- END: REQUIRED FOR GOOGLE MOBILE ADS (ADMOB) -->
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -40,13 +46,13 @@
             android:value="2" />
     </application>
     <queries>
-  <intent>
-    <action android:name="android.intent.action.VIEW" />
-    <data android:scheme="https" />
-  </intent>
-  <intent>
-    <action android:name="android.intent.action.VIEW" />
-    <data android:scheme="http" />
-  </intent>
-</queries>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <data android:scheme="https" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <data android:scheme="http" />
+    </intent>
+    </queries>
 </manifest>
