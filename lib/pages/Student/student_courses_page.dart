@@ -25,6 +25,12 @@ const Color _kPrimaryColor = Color(0xFF6A67FE);
 // Lighter background used for cards and buttons
 const Color _kLightPrimaryColor = Color(0xFFF0F5FF); 
 
+// --- NEW FILE OPEN QUOTA CONSTANTS ---
+const int _kFreeFileOpensPerDay = 5;
+const int _kRewardFileOpens = 5; 
+// --- END NEW FILE OPEN QUOTA CONSTANTS ---
+
+
 class StudentCoursesPage extends StatefulWidget {
   const StudentCoursesPage({super.key});
 
@@ -70,12 +76,18 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       ? 'ca-app-pub-3940256099942544/5224354917' // Android Test ID
       : 'ca-app-pub-3940256099942544/1712485313'; // iOS Test ID
   // AD VARS END
+  
+  // --- FILE OPEN QUOTA STATE ---
+  int _freeFileOpenCount = 0;
+  DateTime? _lastFileOpenQuotaResetDate;
+  // --- END FILE OPEN QUOTA STATE ---
 
   @override
   void initState() {
     super.initState();
     _initializeNotifications();
     _loadInitialData();
+    _loadFileOpenQuota(); // NEW: Load the file open quota
     // AD INIT START
     _loadInterstitialAd();
     _loadRewardedAd();
@@ -91,6 +103,124 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     // AD DISPOSE END
     super.dispose();
   }
+  
+  // --- FILE OPEN QUOTA METHODS ---
+
+  Future<void> _loadFileOpenQuota() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+    
+    final quotaRef = _firestore.collection('users').doc(user.email).collection('settings').doc('file_open_quota');
+    final now = DateTime.now();
+    
+    try {
+      final doc = await quotaRef.get();
+      
+      if (doc.exists) {
+        final data = doc.data()!;
+        int count = data['count'] ?? 0;
+        Timestamp? lastResetTimestamp = data['lastReset'] as Timestamp?;
+        DateTime? lastResetDate = lastResetTimestamp?.toDate();
+        
+        bool shouldReset = lastResetDate == null ||
+            lastResetDate.year != now.year ||
+            lastResetDate.month != now.month ||
+            lastResetDate.day != now.day;
+        
+        if (shouldReset) {
+          // Reset quota to free file opens per day
+          await quotaRef.set({
+            'count': _kFreeFileOpensPerDay,
+            'lastReset': Timestamp.now(),
+          });
+          count = _kFreeFileOpensPerDay;
+          lastResetDate = now;
+        }
+
+        if(mounted) {
+          setState(() {
+            _freeFileOpenCount = count;
+            _lastFileOpenQuotaResetDate = lastResetDate;
+          });
+        }
+      } else {
+        // Document does not exist, create it with initial free quota
+        await quotaRef.set({
+          'count': _kFreeFileOpensPerDay,
+          'lastReset': Timestamp.now(),
+        });
+        if(mounted) {
+          setState(() {
+            _freeFileOpenCount = _kFreeFileOpensPerDay;
+            _lastFileOpenQuotaResetDate = now;
+          });
+        }
+      }
+    } catch (e) {
+      print("Error loading file open quota: $e");
+      if(mounted) setState(() => _freeFileOpenCount = 0);
+    }
+  }
+
+  Future<void> _decrementFileOpenCount() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null || _freeFileOpenCount <= 0) return;
+    
+    final quotaRef = _firestore.collection('users').doc(user.email).collection('settings').doc('file_open_quota');
+    
+    try {
+      await quotaRef.update({
+        'count': FieldValue.increment(-1),
+      });
+      if(mounted) setState(() => _freeFileOpenCount -= 1);
+    } catch (e) {
+      print("Error decrementing file open quota: $e");
+    }
+  }
+
+  Future<void> _grantFileOpenPrompts(int count) async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    final quotaRef = _firestore.collection('users').doc(user.email).collection('settings').doc('file_open_quota');
+
+    try {
+      await quotaRef.update({
+        'count': FieldValue.increment(count),
+      });
+      if(mounted) setState(() => _freeFileOpenCount += count);
+      _showSnackbar("$count extra file opens granted!", success: true);
+    } catch (e) {
+      print("Error granting file open quota: $e");
+    }
+  }
+
+  // --- CORE LOGIC: HANDLE FILE OPEN QUOTA ---
+  void _handleFileOpenQuota(Function onQuotaAvailable) {
+    if (_freeFileOpenCount > 0) {
+      // 1. Quota available: Decrement and execute the action immediately
+      _decrementFileOpenCount();
+      onQuotaAvailable();
+    } else {
+      // 2. Quota depleted: Show ad prompt
+      _showAdPromptDialog(
+        title: "Run out of free file opens!",
+        content: "You have used your daily $_kFreeFileOpensPerDay free file opens. Watch a short rewarded ad to get $_kRewardFileOpens more file opens.",
+        onConfirm: () {
+          // Show the rewarded ad
+          _showRewardedAd(() {
+            _grantFileOpenPrompts(_kRewardFileOpens);
+            onQuotaAvailable(); // Execute the original action after getting the reward
+          }, onAdDismissed: () {
+            // No action needed here, as reward grant executes the action.
+          });
+        },
+      );
+    }
+  }
+
+  // --- END FILE OPEN QUOTA METHODS ---
+
   
   // AD METHODS START
   void _loadInterstitialAd() {
@@ -120,6 +250,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     );
   }
 
+  // MODIFIED: _showInterstitialAd is no longer used for file open, retaining for other purposes if needed.
   void _showInterstitialAd(Function onDismissed) {
     if (_interstitialAd != null) {
       _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
@@ -168,22 +299,25 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     );
   }
 
-  void _showRewardedAd(Function onRewardGranted) {
+  // MODIFIED: Added onAdDismissed callback to handle cases where the user closes the ad without earning a reward.
+  void _showRewardedAd(Function onRewardGranted, {required Function onAdDismissed}) {
     if (_rewardedAd != null) {
       _rewardedAd!.show(onUserEarnedReward: (ad, reward) {
-        onRewardGranted(); // Execute the core download logic
-        _showSnackbar('Reward granted! Download started.', success: true);
+        onRewardGranted(); // Execute the core logic
+        _showSnackbar('Reward granted! Action started.', success: true);
         _loadRewardedAd(); // Load next ad
       });
       _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
         onAdDismissedFullScreenContent: (ad) {
            ad.dispose();
            _loadRewardedAd();
+           onAdDismissed(); // Execute logic for dismissal (if no reward granted)
         },
         onAdFailedToShowFullScreenContent: (ad, error) {
           ad.dispose();
           _loadRewardedAd();
           _showSnackbar('Ad failed to load. Please try again.', success: false);
+          onAdDismissed(); // Execute logic for dismissal (if ad fails)
         },
       );
     } else {
@@ -191,6 +325,50 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       _showSnackbar('Ad is not ready. Please wait a moment and try the download again.', success: false);
     }
   }
+  
+  // NEW: Ad Dialog method (copied and modified from student_ai_page)
+  Future<void> _showAdPromptDialog({
+    required String title,
+    required String content,
+    required VoidCallback onConfirm,
+  }) async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: _kPrimaryColor)),
+          content: Text(content, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Dismiss dialog
+              },
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton.icon(
+              onPressed: _rewardedAd != null
+                  ? () {
+                      Navigator.of(context).pop(); // Dismiss dialog
+                      onConfirm();
+                    }
+                  : null, // Disable if ad is not loaded
+              icon: Icon(_rewardedAd != null ? Icons.play_arrow : Icons.sync, color: Colors.white),
+              label: Text(_rewardedAd != null ? 'Watch Rewarded Ad' : 'Loading Ad...', style: const TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kPrimaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // AD METHODS END
   
   Future<void> _loadInitialData() async {
@@ -1071,8 +1249,8 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 return Padding(
                   padding: const EdgeInsets.only(right: 12.0),
                   child: InkWell(
-                    // AD INTERSTITIAL: Show ad before opening file/link
-                    onTap: () => _showInterstitialAd(() {
+                    // MODIFIED: Use the new quota handler
+                    onTap: () => _handleFileOpenQuota(() {
                       _updateRecentlyAccessed(docPath);
                       if (fileType == 'link') {
                         _openExternalUrl(item['url']);
@@ -1141,8 +1319,8 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                   return Padding(
                     padding: const EdgeInsets.only(right: 12.0),
                     child: InkWell(
-                      // AD INTERSTITIAL: Show ad before opening file/link
-                      onTap: () => _showInterstitialAd(() {
+                      // MODIFIED: Use the new quota handler
+                      onTap: () => _handleFileOpenQuota(() {
                         _updateRecentlyAccessed(docPath);
                         if (fileType == 'link') {
                           _openExternalUrl(item['url']);
@@ -1427,11 +1605,16 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       );
     }
 
-    // MODIFIED: Open File logic now calls interstitial ad
+    // MODIFIED: Open File logic now calls the quota handler
     void openFile() {
-      _showInterstitialAd(() {
+      _handleFileOpenQuota(() {
         _updateRecentlyAccessed(docPath);
         context.push('/file_viewer', extra: createFileObject());
+        _logActivity('File Opened', {
+          'fileName': fileName,
+          'fileType': fileType,
+          'filePath': docPath,
+        });
       });
     }
 
@@ -1444,7 +1627,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: openFile,
+        onTap: openFile, // Tap anywhere on the card to open file
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -1482,10 +1665,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 ),
               ),
               
-              TextButton(
-                onPressed: openFile,
-                child: Text('Open', style: TextStyle(color: _kPrimaryColor)), // COLOR CHANGE
-              ),
+              // REMOVED: TextButton 'Open'
               
               _buildOptionsMenu(doc, createFileObject(), docPath),
             ],
@@ -1505,10 +1685,15 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
 
 
     void openLink() {
-      // MODIFIED: Open Link logic now calls interstitial ad
-      _showInterstitialAd(() {
+      // MODIFIED: Open Link logic now calls the quota handler
+      _handleFileOpenQuota(() {
         _updateRecentlyAccessed(docPath);
         _openExternalUrl(url);
+        _logActivity('Link Opened', {
+          'linkTitle': linkTitle,
+          'url': url,
+          'filePath': docPath,
+        });
       });
     }
 
@@ -1535,7 +1720,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: openLink,
+        onTap: openLink, // Tap anywhere on the card to open file
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -1569,30 +1754,37 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                 ),
               ),
               
-              TextButton(
-                onPressed: openLink,
-                child: Text('Open', style: TextStyle(color: _kPrimaryColor)), // COLOR CHANGE
-              ),
+              // REMOVED: TextButton 'Open'
               
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'open_external') {
-                    openLink();
-                  } else if (value == 'add_to_favorites') {
-                    _toggleFavorite(doc); // Use toggle
-                  } else if (value == 'share') {
-                    Share.share('Check out this link: $url');
-                  } else if (value == 'details') {
-                    context.push('/file_details', extra: createLinkObject());
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'open_external', child: Text('Open in Browser')),
-                  PopupMenuItem(value: 'add_to_favorites', child: Text(isFavorite ? 'Remove from favorites' : 'Add to favorites')),
-                  const PopupMenuItem(value: 'share', child: Text('Share')),
-                  const PopupMenuItem(value: 'details', child: Text('File details')),
-                ],
-                icon: Icon(Icons.more_vert, color: Colors.grey.shade600),
+              // MODIFIED: Increase clickable area using a SizedBox wrapper
+              SizedBox(
+                width: 48, // Increased width for easier tapping
+                height: 48, // Increased height for easier tapping
+                child: Center(
+                  child: PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'open_external') {
+                        openLink();
+                      } else if (value == 'add_to_favorites') {
+                        _toggleFavorite(doc); // Use toggle
+                      } else if (value == 'share') {
+                        Share.share('Check out this link: $url');
+                      } else if (value == 'details') {
+                        context.push('/file_details', extra: createLinkObject());
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'open_external', child: Text('Open in Browser')),
+                      PopupMenuItem(value: 'add_to_favorites', child: Text(isFavorite ? 'Remove from favorites' : 'Add to favorites')),
+                      const PopupMenuItem(value: 'share', child: Text('Share')),
+                      const PopupMenuItem(value: 'details', child: Text('File details')),
+                    ],
+                    icon: Icon(Icons.more_vert, color: Colors.grey.shade600),
+                    // Prevent the InkWell (Card) from triggering when the menu button is tapped
+                    // This is handled by the `GestureDetector` logic in `_buildOptionsMenu` 
+                    // but for `PopupMenuButton` directly, we rely on the hit test behavior.
+                  ),
+                ),
               ),
             ],
           ),
@@ -1612,45 +1804,50 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     // that won't be rebuilt by state changes in the parent list item (Card/Row).
     return Builder(
       builder: (context) {
-        return GestureDetector( // Use GestureDetector to ensure proper touch handling
-          onTap: () {
-            // Explicitly show the menu on tap, rather than relying on default behavior
-            final RenderBox button = context.findRenderObject() as RenderBox;
-            final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-            final RelativeRect position = RelativeRect.fromRect(
-              Rect.fromPoints(
-                button.localToGlobal(Offset.zero, ancestor: overlay),
-                button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
-              ),
-              Offset.zero & overlay.size,
-            );
-
-            // Show the popup menu
-            showMenu<String>(
-              context: context,
-              position: position,
-              items: [
-                _buildMenuItem('open', 'Open File', Icons.file_open_outlined, context),
-                if (supportedAiTypes.contains(fileType))
-                  _buildMenuItem('ask_ai', 'Ask AI', Icons.smart_toy_outlined, context),
-                // Conditional text for favorites
-                _buildMenuItem('toggle_favorite', isFavorite ? 'Remove from favorites' : 'Add to favorites', isFavorite ? Icons.star : Icons.star_border_outlined, context),
-                _buildMenuItem('download', 'Download', Icons.download_outlined, context),
-                _buildMenuItem('share', 'Share', Icons.share_outlined, context),
-                // NEW: Add to Reminder option
-                _buildMenuItem('reminder', 'Add to Reminder', Icons.alarm_add_outlined, context),
-                _buildMenuItem('details', 'File details', Icons.info_outline, context),
-              ],
-            ).then((value) {
-              if (value != null) {
-                // Execute the selected action
-                _handleOptionSelected(value, doc, fileObject, docPath);
-              }
-            });
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Icon(Icons.more_vert, color: Colors.grey.shade600),
+        // MODIFIED: Wrap GestureDetector in a SizedBox to increase clickable area
+        return SizedBox(
+          width: 48, // Increased width for easier tapping
+          height: 48, // Increased height for easier tapping
+          child: Center(
+            child: GestureDetector( // Use GestureDetector to ensure proper touch handling
+              onTap: () {
+                // Explicitly show the menu on tap, rather than relying on default behavior
+                final RenderBox button = context.findRenderObject() as RenderBox;
+                final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+                final RelativeRect position = RelativeRect.fromRect(
+                  Rect.fromPoints(
+                    button.localToGlobal(Offset.zero, ancestor: overlay),
+                    button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+                  ),
+                  Offset.zero & overlay.size,
+                );
+    
+                // Show the popup menu
+                showMenu<String>(
+                  context: context,
+                  position: position,
+                  items: [
+                    _buildMenuItem('open', 'Open File', Icons.file_open_outlined, context),
+                    if (supportedAiTypes.contains(fileType))
+                      _buildMenuItem('ask_ai', 'Ask AI', Icons.smart_toy_outlined, context),
+                    // Conditional text for favorites
+                    _buildMenuItem('toggle_favorite', isFavorite ? 'Remove from favorites' : 'Add to favorites', isFavorite ? Icons.star : Icons.star_border_outlined, context),
+                    _buildMenuItem('download', 'Download', Icons.download_outlined, context),
+                    _buildMenuItem('share', 'Share', Icons.share_outlined, context),
+                    // NEW: Add to Reminder option
+                    _buildMenuItem('reminder', 'Add to Reminder', Icons.alarm_add_outlined, context),
+                    _buildMenuItem('details', 'File details', Icons.info_outline, context),
+                  ],
+                ).then((value) {
+                  if (value != null) {
+                    // Execute the selected action
+                    _handleOptionSelected(value, doc, fileObject, docPath);
+                  }
+                });
+              },
+              // MODIFIED: The Icon is wrapped in the increased-size GestureDetector/SizedBox
+              child: Icon(Icons.more_vert, color: Colors.grey.shade600),
+            ),
           ),
         );
       },
@@ -1691,10 +1888,11 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     };
     
     if (value == 'open') {
-      // AD INTERSTITIAL: Show ad before opening file
-      _showInterstitialAd(() {
+      // MODIFIED: Open File logic now calls the quota handler
+      _handleFileOpenQuota(() {
         _updateRecentlyAccessed(docPath);
         context.push('/file_viewer', extra: fileObject);
+        _logActivity('File Opened', activityDetails);
       });
     } else if (value == 'ask_ai') {
       context.push('/student_ai', extra: fileObject);
@@ -1706,13 +1904,13 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       
     } else if (value == 'download') {
       // AD REWARDED: Show rewarded ad before downloading file
-      _showRewardedAd(() => _downloadFile(doc));
+      _showRewardedAd(() => _downloadFile(doc), onAdDismissed: (){});
       // Log the action (After ad dismissal/reward grant)
       await _logActivity('Requested Download', activityDetails);
 
     } else if (value == 'share') {
       // AD REWARDED: Show rewarded ad before sharing file (Standard monetization: download/share cost an ad)
-      _showRewardedAd(() => _shareFile(doc));
+      _showRewardedAd(() => _shareFile(doc), onAdDismissed: (){});
       // Log the action (After ad dismissal/reward grant)
       await _logActivity('Requested Share', activityDetails);
     } else if (value == 'reminder') {

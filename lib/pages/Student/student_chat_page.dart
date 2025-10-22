@@ -238,9 +238,8 @@ class __ChatRoomState extends State<_ChatRoom> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
-  // Use a StreamController to manually manage the stream source
-  final StreamController<List<DocumentSnapshot>> _firestoreMessagesController = 
-      StreamController<List<DocumentSnapshot>>.broadcast();
+  // FIX: Make StreamController nullable and initialize/dispose properly
+  StreamController<List<DocumentSnapshot>>? _firestoreMessagesController;
 
   // State for official Firestore messages loaded so far
   List<DocumentSnapshot> _firestoreMessages = [];
@@ -272,8 +271,12 @@ class __ChatRoomState extends State<_ChatRoom> {
       _startChatListener();
     }
   }
-
+  
+  // FIX: Refactored logic to correctly manage the StreamController life cycle
   void _startChatListener() {
+    // 1. Create a new controller
+    _firestoreMessagesController = StreamController<List<DocumentSnapshot>>.broadcast();
+    
     final Query baseQuery = FirebaseFirestore.instance
         .collection(widget.chatPath)
         .orderBy('timestamp', descending: true)
@@ -281,9 +284,9 @@ class __ChatRoomState extends State<_ChatRoom> {
 
     // Initial load state: Added mounted check
     baseQuery.get().then((initialSnapshot) {
-      if (mounted) { // FIX: Added mounted check
+      if (mounted) { 
          _firestoreMessages = initialSnapshot.docs.reversed.toList();
-         _firestoreMessagesController.add(_firestoreMessages);
+         _firestoreMessagesController!.add(_firestoreMessages); // Use ! for non-nullable access
          setState(() {
             _isInitialLoad = false;
          });
@@ -294,19 +297,19 @@ class __ChatRoomState extends State<_ChatRoom> {
       }
     }).catchError((error) {
        print('Firestore Initial Load Error: $error');
-       if (mounted) { // FIX: Added mounted check
+       if (mounted) { 
           setState(() {
              _isInitialLoad = false;
           });
-          _firestoreMessagesController.add([]);
+          _firestoreMessagesController!.add([]); // Use ! for non-nullable access
        }
     });
 
     // Start the continuous listener for updates
     _chatSubscription = baseQuery.snapshots(includeMetadataChanges: true).listen(
       (snapshot) {
-        // FIX: Added mounted check before processing snapshot
-        if (mounted && !_isInitialLoad) { 
+        // FIX: Check mounted and ensure controller exists before adding data
+        if (mounted && !_isInitialLoad && _firestoreMessagesController != null && !_firestoreMessagesController!.isClosed) { 
           
           bool addedNewMessage = false;
           
@@ -351,7 +354,7 @@ class __ChatRoomState extends State<_ChatRoom> {
             return aTime.compareTo(bTime);
           });
           
-          _firestoreMessagesController.add(_firestoreMessages);
+          _firestoreMessagesController!.add(_firestoreMessages);
           
           // Scroll to bottom only if a new message was added by another user
           if (addedNewMessage) {
@@ -368,11 +371,16 @@ class __ChatRoomState extends State<_ChatRoom> {
       },
     );
   }
-
+  
+  // FIX: Clear and close the StreamController properly
   void _stopChatListener() {
     _chatSubscription?.cancel();
     _chatSubscription = null;
-    _firestoreMessagesController.add([]); // Clear existing messages
+    if (_firestoreMessagesController != null && !_firestoreMessagesController!.isClosed) {
+      _firestoreMessagesController!.add([]); // Clear existing messages
+      _firestoreMessagesController!.close();
+    }
+    _firestoreMessagesController = null; // Set to null after closing
   }
 
   // NEW: Function to delete a message
@@ -534,7 +542,7 @@ class __ChatRoomState extends State<_ChatRoom> {
     _messageController.dispose();
     _scrollController.dispose();
     _stopChatListener();
-    _firestoreMessagesController.close();
+    // No need to close the controller here as it's closed in _stopChatListener
     super.dispose();
   }
 
@@ -571,11 +579,12 @@ class __ChatRoomState extends State<_ChatRoom> {
       children: [
         // 1. Message Stream Area
         Expanded(
+          // FIX: Access the stream controller only if it is not null
           child: StreamBuilder<List<DocumentSnapshot>>(
-            stream: _firestoreMessagesController.stream,
+            stream: _firestoreMessagesController?.stream,
             builder: (context, snapshot) {
               
-              if (_isInitialLoad) {
+              if (_isInitialLoad || _firestoreMessagesController == null) {
                 // Show shimmer while the initial data fetch is pending
                 return const _ChatRoomShimmer();
               }
@@ -845,6 +854,7 @@ class _MessageBubble extends StatelessWidget {
         children: [
           // Sender Info and Time
           Row(
+            // FIX: Use MainAxisAlignment.start instead of CrossAxisAlignment.start
             mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,

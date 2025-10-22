@@ -13,6 +13,17 @@ import 'package:grademate/models/chat_message_model.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // NEW: Google Mobile Ads SDK
+import 'package:google_fonts/google_fonts.dart'; // NEW: For consistent styling
+
+// Color constant inferred from student_home_page.dart
+const Color _kPrimaryColor = Color(0xFF6A67FE);
+
+// --- UPDATED QUOTA CONSTANTS ---
+const int _kFreeTextPromptsPerDay = 10; // Changed from 3 to 10
+const int _kRewardTextPrompts = 5;      // Changed from 3 to 5
+const int _kFreeFilePromptsPerDay = 5;  // New constant
+const int _kRewardFilePrompts = 3;      // New constant for file reward
 
 // --- New Models for Unified Chat List ---
 abstract class ChatItem {}
@@ -59,12 +70,24 @@ class _StudentAIPageState extends State<StudentAIPage> {
   bool _hasMoreData = true;
   String? _latestSessionId; // To append new messages to the most recent chat
 
+  // --- NEW Quota and Ad State ---
+  RewardedAd? _rewardedAd;
+  bool _isAdLoaded = false;
+  final String _rewardedAdUnitId = Platform.isAndroid
+      ? 'ca-app-pub-3940256099942544/5224354917' // Android Test ID
+      : 'ca-app-pub-3940256099942544/1712485360'; // iOS Test ID
+
+  int _freeTextPromptCount = 0; // UPDATED: State for Text Prompts
+  int _freeFilePromptCount = 0; // NEW: State for File Prompts
+  DateTime? _lastQuotaResetDate;
+
   @override
   void initState() {
     super.initState();
     _loadApiKey();
     _initializeChat();
     _scrollController.addListener(_onScroll);
+    _loadRewardedAd();
   }
 
   @override
@@ -73,6 +96,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _removeFile(isDisposing: true);
+    _rewardedAd?.dispose(); // NEW: Dispose ad
     super.dispose();
   }
 
@@ -95,7 +119,10 @@ class _StudentAIPageState extends State<StudentAIPage> {
       _downloadedImageFile = null;
       _extractedFileText = null;
     });
+    // Ensure quota is reloaded on refresh
+    await _loadUserQuota();
     await _loadConversations(isInitial: true);
+    _showSnackbar("Chat reloaded.", success: true);
   }
 
   Future<void> _loadApiKey() async {
@@ -124,14 +151,192 @@ class _StudentAIPageState extends State<StudentAIPage> {
       return;
     }
 
+    await _loadUserQuota(); // NEW: Load quota before loading conversations
+
     if (widget.initialFile != null) {
       _startNewSessionWithFile(widget.initialFile!);
     } else {
       _loadConversations(isInitial: true);
     }
   }
+  
+  // --- UPDATED Quota Management Methods ---
+
+  Future<void> _loadUserQuota() async {
+    if (_currentUser == null || _currentUser!.email == null) return;
+    
+    final quotaRef = _firestore.collection('users').doc(_currentUser!.email).collection('settings').doc('ai_quota');
+    final now = DateTime.now();
+    
+    try {
+        final doc = await quotaRef.get();
+        
+        if (doc.exists) {
+            final data = doc.data()!;
+            int textCount = data['textCount'] ?? 0;
+            int fileCount = data['fileCount'] ?? 0; // NEW
+            Timestamp? lastResetTimestamp = data['lastReset'] as Timestamp?;
+            DateTime? lastResetDate = lastResetTimestamp?.toDate();
+            
+            bool shouldReset = lastResetDate == null ||
+                lastResetDate.year != now.year ||
+                lastResetDate.month != now.month ||
+                lastResetDate.day != now.day;
+            
+            if (shouldReset) {
+                // Reset quotas to their free limits
+                await quotaRef.set({
+                    'textCount': _kFreeTextPromptsPerDay,
+                    'fileCount': _kFreeFilePromptsPerDay, // NEW
+                    'lastReset': Timestamp.now(),
+                });
+                textCount = _kFreeTextPromptsPerDay;
+                fileCount = _kFreeFilePromptsPerDay;
+                lastResetDate = now;
+            }
+
+            if(mounted) {
+                setState(() {
+                    _freeTextPromptCount = textCount;
+                    _freeFilePromptCount = fileCount; // NEW
+                    _lastQuotaResetDate = lastResetDate;
+                });
+            }
+        } else {
+            // Document does not exist, create it with initial free quota
+            await quotaRef.set({
+                'textCount': _kFreeTextPromptsPerDay,
+                'fileCount': _kFreeFilePromptsPerDay, // NEW
+                'lastReset': Timestamp.now(),
+            });
+            if(mounted) {
+                setState(() {
+                    _freeTextPromptCount = _kFreeTextPromptsPerDay;
+                    _freeFilePromptCount = _kFreeFilePromptsPerDay; // NEW
+                    _lastQuotaResetDate = now;
+                });
+            }
+        }
+    } catch (e) {
+        if (kDebugMode) print("Error loading user quota: $e");
+        if(mounted) {
+            setState(() {
+                _freeTextPromptCount = 0;
+                _freeFilePromptCount = 0;
+            });
+        }
+    }
+  }
+
+  Future<void> _decrementPromptCount({required bool isFilePrompt}) async {
+    if (_currentUser == null || _currentUser!.email == null) return;
+    
+    final quotaRef = _firestore.collection('users').doc(_currentUser!.email).collection('settings').doc('ai_quota');
+    
+    String fieldToDecrement = isFilePrompt ? 'fileCount' : 'textCount';
+    
+    try {
+        await quotaRef.update({
+            fieldToDecrement: FieldValue.increment(-1),
+        });
+        if(mounted) {
+            setState(() {
+                if (isFilePrompt) {
+                    _freeFilePromptCount -= 1;
+                } else {
+                    _freeTextPromptCount -= 1;
+                }
+            });
+        }
+    } catch (e) {
+        if (kDebugMode) print("Error decrementing quota: $e");
+    }
+  }
+
+  Future<void> _grantPrompts({required int count, required bool isFilePrompt}) async {
+    if (_currentUser == null || _currentUser!.email == null) return;
+
+    final quotaRef = _firestore.collection('users').doc(_currentUser!.email).collection('settings').doc('ai_quota');
+    
+    String fieldToIncrement = isFilePrompt ? 'fileCount' : 'textCount';
+
+    try {
+        await quotaRef.update({
+            fieldToIncrement: FieldValue.increment(count),
+        });
+        if(mounted) {
+            setState(() {
+                if (isFilePrompt) {
+                    _freeFilePromptCount += count;
+                } else {
+                    _freeTextPromptCount += count;
+                }
+            });
+        }
+        _showSnackbar("$count extra prompts granted!", success: true);
+    } catch (e) {
+        if (kDebugMode) print("Error granting quota: $e");
+    }
+  }
+
+  // --- NEW Rewarded Ad Logic ---
+
+  void _loadRewardedAd() {
+    RewardedAd.load(
+        adUnitId: _rewardedAdUnitId,
+        request: const AdRequest(),
+        rewardedAdLoadCallback: RewardedAdLoadCallback(
+            onAdLoaded: (ad) {
+                if (!mounted) {
+                    ad.dispose();
+                    return;
+                }
+                setState(() {
+                    _rewardedAd = ad;
+                    _isAdLoaded = true;
+                });
+            },
+            onAdFailedToLoad: (error) {
+                if (kDebugMode) print('RewardedAd failed to load: $error');
+                setState(() => _isAdLoaded = false);
+            },
+        ),
+    );
+  }
+
+  void _showRewardedAd(Function(bool isFilePrompt) onAdWatched, bool isFilePrompt) {
+    if (_rewardedAd == null) {
+        _showErrorDialog("Ad Not Ready", "The rewarded ad is not loaded yet. Please try again in a moment.");
+        _loadRewardedAd();
+        return;
+    }
+
+    _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+            ad.dispose();
+            _rewardedAd = null;
+            _isAdLoaded = false;
+            _loadRewardedAd(); // Load the next ad
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+            ad.dispose();
+            _rewardedAd = null;
+            _isAdLoaded = false;
+            _loadRewardedAd(); // Load the next ad
+            _showErrorDialog("Ad Error", "Failed to show ad. Please try again.");
+            if (kDebugMode) print('Rewarded ad failed to show: $error');
+        },
+    );
+
+    _rewardedAd!.show(onUserEarnedReward: (ad, reward) {
+        // Reward the user only after they successfully watch the ad
+        onAdWatched(isFilePrompt);
+    });
+  }
+
 
   Future<void> _loadConversations({bool isInitial = false}) async {
+    // ... existing logic ...
     if (_isLoadingMore) return;
     setState(() {
       _isLoadingMore = true;
@@ -139,6 +344,8 @@ class _StudentAIPageState extends State<StudentAIPage> {
     });
 
     if (_currentUser == null || _currentUser!.email == null) return;
+    
+    // ... existing query logic ...
 
     Query query = _firestore
         .collection('users')
@@ -283,53 +490,115 @@ class _StudentAIPageState extends State<StudentAIPage> {
     }
     _saveMessage(errorMessage);
   }
-
+  
+  // --- ADDED: The required _sendMessage function (Entry Point) ---
   Future<void> _sendMessage() async {
     final userMessageText = _textController.text.trim();
     if (userMessageText.isEmpty || _isLoading) return;
     if (_apiKey == null || _apiKey!.isEmpty) {
-      _showErrorDialog("API Key Missing", "GEMINI_API_KEY is not configured.");
-      return;
+        _showErrorDialog("API Key Missing", "GEMINI_API_KEY is not configured.");
+        return;
     }
     if (_currentUser == null || _currentUser!.email == null) {
-      _showErrorDialog(
-          "Authentication Error", "Could not send message. Please log in again.");
-      return;
+        _showErrorDialog(
+            "Authentication Error", "Could not send message. Please log in again.");
+        return;
     }
-
-    final userMessage = ChatMessage(
-        text: userMessageText, role: 'user', timestamp: Timestamp.now());
-
-    setState(() {
-      _chatItems.add(MessageItem(userMessage));
-      _isLoading = true;
-    });
+    
+    // Set loading state right away, as the ad dialog or execution is loading.
+    if(mounted) setState(() => _isLoading = true);
     _textController.clear();
     _scrollToBottom();
+    
+    // Check if a new session needs to be started
+    bool shouldStartNewSession = _latestSessionId == null;
 
+    if (shouldStartNewSession) {
+      // If no session is established, force a refresh and tell user to try again
+      await _handleRefresh();
+      if(mounted) setState(() => _isLoading = false);
+      _showErrorDialog("Session Error", "Could not find an active chat session. Please try sending your message again.");
+      return;
+    }
+    
+    // Handle Quota/Ad check
+    await _handleQuotaAndSend(userMessageText);
+    
+    // _isLoading will be reset by _executeSendMessage's finally block
+  }
+  // --- END ADDED: _sendMessage function ---
+
+  // --- UPDATED Quota and Ad Check Handler ---
+  Future<void> _handleQuotaAndSend(String userMessageText) async {
+    final bool isFilePrompt = _attachedFile != null;
+    
+    if (isFilePrompt) {
+        // 1. File Prompt Logic
+        if (_freeFilePromptCount > 0) {
+            await _decrementPromptCount(isFilePrompt: true);
+            await _executeSendMessage(userMessageText);
+        } else {
+            // Quota depleted, require ad for more file prompts
+            _showAdPromptDialog(
+                title: "Run out of file prompts!",
+                content: "You have used your daily free file prompts. Watch a short rewarded ad to get $_kRewardFilePrompts more file prompts.",
+                onConfirm: () {
+                    _showRewardedAd(
+                        (bool isFile) {
+                            _grantPrompts(count: _kRewardFilePrompts, isFilePrompt: true);
+                            _executeSendMessage(userMessageText); // Immediately run the current message after getting the reward
+                        },
+                        true // isFilePrompt
+                    );
+                },
+            );
+        }
+    } else {
+        // 2. Text Prompt Logic
+        if (_freeTextPromptCount > 0) {
+            await _decrementPromptCount(isFilePrompt: false);
+            await _executeSendMessage(userMessageText);
+        } else {
+            // Quota depleted, require ad for more text prompts
+            _showAdPromptDialog(
+                title: "Run out of text prompts!",
+                content: "You have used your daily free prompts. Watch a short rewarded ad to get $_kRewardTextPrompts more text prompts.",
+                onConfirm: () {
+                    _showRewardedAd(
+                        (bool isFile) {
+                            _grantPrompts(count: _kRewardTextPrompts, isFilePrompt: false);
+                            _executeSendMessage(userMessageText); // Immediately run the current message after getting the reward
+                        },
+                        false // isFilePrompt
+                    );
+                },
+            );
+        }
+    }
+  }
+
+  // Renamed core logic for message generation and API call
+  Future<void> _executeSendMessage(String userMessageText) async {
+    final userMessage = ChatMessage(
+        text: userMessageText, role: 'user', timestamp: Timestamp.now());
+    
+    // Add user message to UI immediately
+    if (mounted) setState(() => _chatItems.add(MessageItem(userMessage)));
+    _scrollToBottom();
+
+    // Save the user message and ensure session ID is set (or was already set)
     bool shouldStartNewSession = _latestSessionId == null;
     await _saveMessage(userMessage, isNewSession: shouldStartNewSession);
 
-    if (shouldStartNewSession) {
-      await _handleRefresh();
-      if(mounted) setState(() => _isLoading = false);
-      return;
+    // This is the safety check after save
+    if (_latestSessionId == null) {
+        if (mounted) setState(() => _isLoading = false);
+        _showErrorDialog("Session Error", "Could not establish a chat session. Please refresh and try again.");
+        return;
     }
 
-    final lowerCaseMessage = userMessageText.toLowerCase();
-    if (lowerCaseMessage.contains("who are you") ||
-        lowerCaseMessage.contains("who developed you") ||
-        lowerCaseMessage.contains("who made you")) {
-      final identityResponse = ChatMessage(
-        text: "I am a Grademate AI, developed by the Grademate team.",
-        role: 'model',
-        timestamp: Timestamp.now(),
-      );
-      if (mounted) setState(() => _chatItems.add(MessageItem(identityResponse)));
-      await _saveMessage(identityResponse);
-    } else {
-      ChatMessage modelMessage;
-      try {
+    ChatMessage modelMessage;
+    try {
         final url = Uri.parse(
             'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=$_apiKey');
         List<Map<String, dynamic>> parts = [];
@@ -387,12 +656,12 @@ class _StudentAIPageState extends State<StudentAIPage> {
             timestamp: Timestamp.now());
       }
 
+      // Update UI and save model response
       if (mounted) setState(() => _chatItems.add(MessageItem(modelMessage)));
       await _saveMessage(modelMessage);
-    }
 
-    if (mounted) setState(() => _isLoading = false);
-    _scrollToBottom();
+      if (mounted) setState(() => _isLoading = false);
+      _scrollToBottom();
   }
 
   Future<void> _saveMessage(ChatMessage message, {bool isNewSession = false, FileData? file}) async {
@@ -425,6 +694,14 @@ class _StudentAIPageState extends State<StudentAIPage> {
         title: const Text('AI Assistant'),
         backgroundColor: Colors.white,
         elevation: 1,
+        actions: [
+          // NEW: Refresh Button
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.black),
+            onPressed: _isLoading ? null : _handleRefresh,
+            tooltip: 'Reload Chat',
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _handleRefresh,
@@ -456,11 +733,104 @@ class _StudentAIPageState extends State<StudentAIPage> {
             if (_isLoading && !_isLoadingMore)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: LinearProgressIndicator(),
+                child: LinearProgressIndicator(color: _kPrimaryColor),
               ),
             _buildMessageInputField(),
           ],
         ),
+      ),
+    );
+  }
+  
+  // --- UPDATED Quota Display Widget ---
+  Widget _buildQuotaDisplay() {
+    final bool hasFile = _attachedFile != null;
+    final int textCount = _freeTextPromptCount;
+    final int fileCount = _freeFilePromptCount;
+
+    String quotaText;
+    Color textColor;
+    Color bgColor;
+
+    if (hasFile) {
+        quotaText = "File Prompts Remaining: $fileCount";
+        if (fileCount <= 0) {
+            quotaText = "Out of File Prompts! Watch an ad for $_kRewardFilePrompts more.";
+            textColor = Colors.red.shade700;
+            bgColor = Colors.red.shade50;
+        } else {
+            textColor = Colors.blue.shade700;
+            bgColor = Colors.blue.shade50;
+        }
+    } else {
+        quotaText = "Text Prompts Remaining: $textCount";
+        if (textCount <= 0) {
+            quotaText = "Out of Text Prompts! Watch an ad for $_kRewardTextPrompts more.";
+            textColor = Colors.red.shade700;
+            bgColor = Colors.red.shade50;
+        } else {
+            textColor = Colors.green.shade700;
+            bgColor = Colors.green.shade50;
+        }
+    }
+
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      margin: const EdgeInsets.only(top: 8.0, left: 8.0, right: 8.0),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: textColor.withOpacity(0.3))
+      ),
+      child: Row(
+        children: [
+          Icon(hasFile ? Icons.attach_file : Icons.text_fields, size: 20, color: textColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              quotaText,
+              style: GoogleFonts.inter(
+                color: textColor,
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          // Ad button if quotas are depleted
+          if (hasFile ? fileCount <= 0 : textCount <= 0)
+              ElevatedButton.icon(
+                onPressed: _isAdLoaded
+                    ? () {
+                        // Show Ad Dialog directly from the display widget for quick access
+                        _showAdPromptDialog(
+                            title: hasFile ? "Watch Ad for File Prompts" : "Watch Ad for Text Prompts",
+                            content: hasFile 
+                                ? "Watch a short rewarded ad to get $_kRewardFilePrompts file prompts."
+                                : "Watch a short rewarded ad to get $_kRewardTextPrompts text prompts.",
+                            onConfirm: () {
+                                _showRewardedAd(
+                                    (bool isFile) {
+                                        _grantPrompts(
+                                            count: isFile ? _kRewardFilePrompts : _kRewardTextPrompts,
+                                            isFilePrompt: isFile,
+                                        );
+                                    },
+                                    hasFile // isFilePrompt
+                                );
+                            },
+                        );
+                    }
+                    : null,
+                icon: Icon(_isAdLoaded ? Icons.play_arrow : Icons.sync, size: 16, color: Colors.white),
+                label: Text(_isAdLoaded ? 'Get Free Prompts' : 'Loading...', style: GoogleFonts.inter(fontSize: 12, color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kPrimaryColor,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                ),
+              ),
+        ],
       ),
     );
   }
@@ -495,7 +865,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            const CircleAvatar(child: Icon(Icons.auto_awesome)),
+            const CircleAvatar(child: Icon(Icons.auto_awesome, color: _kPrimaryColor)),
             const SizedBox(width: 8),
           ],
           Flexible(
@@ -503,7 +873,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: isUser
-                    ? Theme.of(context).primaryColor
+                    ? _kPrimaryColor
                     : Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -512,7 +882,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(
+                  p: GoogleFonts.inter(
                       color: isUser ? Colors.white : Colors.black87,
                       fontSize: 16),
                 ),
@@ -544,6 +914,8 @@ class _StudentAIPageState extends State<StudentAIPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // NEW: Quota Display
+          _buildQuotaDisplay(),
           if (_attachedFile != null) _buildAttachedFilePreview(),
           _buildActionChips(),
           SafeArea(
@@ -575,7 +947,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
                     icon: const Icon(Icons.send),
                     onPressed: _isLoading ? null : _sendMessage,
                     style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(context).primaryColor,
+                      backgroundColor: _kPrimaryColor,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.all(12),
                     ),
@@ -674,6 +1046,58 @@ class _StudentAIPageState extends State<StudentAIPage> {
       ),
     );
   }
+
+  void _showSnackbar(String message, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: success ? Colors.green : Colors.red),
+    );
+  }
+
+  // NEW: Dialog to prompt user to watch an ad
+  Future<void> _showAdPromptDialog({
+    required String title,
+    required String content,
+    required VoidCallback onConfirm,
+  }) async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(title, style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: _kPrimaryColor)),
+          content: Text(content, style: GoogleFonts.inter(fontSize: 15, color: Colors.black87)),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Dismiss dialog
+                if (mounted) setState(() => _isLoading = false); // Stop loading if cancelled
+              },
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton.icon(
+              onPressed: _isAdLoaded
+                  ? () {
+                      Navigator.of(context).pop(); // Dismiss dialog
+                      onConfirm();
+                    }
+                  : null, // Disable if ad is not loaded
+              icon: Icon(_isAdLoaded ? Icons.play_arrow : Icons.sync, color: Colors.white),
+              label: Text(_isAdLoaded ? 'Watch Rewarded Ad' : 'Loading Ad...', style: GoogleFonts.inter(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kPrimaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
 
   Widget _buildActionChips() {
     if (_attachedFile == null) return const SizedBox.shrink();

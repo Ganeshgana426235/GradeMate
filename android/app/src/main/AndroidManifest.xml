@@ -12,8 +12,8 @@
 
     <application
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:label="grademate"
+        android:icon="@mipmap/launcher_icon"
+        android:label="GradeMate"
         android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true">
 

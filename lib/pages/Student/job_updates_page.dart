@@ -5,6 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:intl/intl.dart'; 
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // AdMob Import
+import 'dart:io' show Platform; // Platform check for Ad Unit IDs
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 // Helper function to safely convert Timestamp or dynamic to a formatted String
 String _formatDate(dynamic data, {bool isTimeAgo = false}) {
@@ -112,18 +115,87 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
 
   final TextEditingController _searchController = TextEditingController();
 
+  // --- AD MOB INTERSTITIAL VARIABLES ---
+  InterstitialAd? _interstitialAd;
+  final String _adUnitId = Platform.isAndroid 
+    ? 'ca-app-pub-3940256099942544/1033173712' // Android Test ID
+    : 'ca-app-pub-3940256099942544/4411468910'; // iOS Test ID
+  // --- END AD MOB VARIABLES ---
+
+
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _loadInterstitialAd(); // Load the interstitial ad on init
   }
 
   @override
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _interstitialAd?.dispose(); // Dispose the ad
     super.dispose();
   }
+
+  // --- MODIFIED AD MOB METHODS ---
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+        },
+        onAdFailedToLoad: (error) {
+          if (kDebugMode) print('InterstitialAd failed to load: $error');
+          _interstitialAd = null;
+        },
+      ),
+    );
+  }
+  
+  // Method to show ad and then execute URL launch (used by 'Apply Job')
+  void _showAdAndLaunchUrl(BuildContext context, String url) {
+    final Uri uri = Uri.parse(url);
+    
+    // Function to launch the URL after ad dismissal/failure
+    Future<void> launch() async {
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open the application link.')),
+          );
+        }
+      }
+    }
+
+    if (_interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadInterstitialAd(); // Load the next ad
+          launch(); // Execute the action after dismissal
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _loadInterstitialAd(); // Load the next ad
+          if (kDebugMode) print('Interstitial ad failed to show: $error');
+          launch(); // Execute the action even if the ad fails to show
+        },
+      );
+      _interstitialAd!.show();
+    } else {
+      // If ad is not ready, launch the URL directly and try to load a new ad.
+      if (kDebugMode) print('Ad not loaded, launching URL directly.');
+      launch();
+      _loadInterstitialAd(); 
+    }
+  }
+
+  // NOTE: The _showAdAndNavigate method has been removed as it is no longer needed.
+  // --- END AD MOB METHODS ---
+
 
   void _onSearchChanged() {
     setState(() {
@@ -151,6 +223,11 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
     final modeMatch = _selectedWorkMode == null || job.workMode == _selectedWorkMode;
 
     return searchMatch && typeMatch && modeMatch;
+  }
+
+  // New direct navigation function (without ad)
+  void _navigateToJobDetails(BuildContext context, Widget page) {
+    Navigator.push(context, MaterialPageRoute(builder: (c) => page));
   }
 
   @override
@@ -248,7 +325,13 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
                   itemCount: filteredJobs.length,
                   itemBuilder: (context, index) {
                     final job = filteredJobs[index];
-                    return JobCard(job: job, primaryColor: _primaryColor);
+                    // Pass the new direct navigation method
+                    return JobCard(
+                      job: job, 
+                      primaryColor: _primaryColor, 
+                      showAdAndLaunchUrl: _showAdAndLaunchUrl, 
+                      navigateToJobDetails: _navigateToJobDetails, // MODIFIED
+                    );
                   },
                 );
               },
@@ -323,22 +406,34 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
 class JobCard extends StatelessWidget {
   final JobModel job;
   final Color primaryColor;
+  final Function(BuildContext context, String url) showAdAndLaunchUrl; 
+  // Renamed and changed signature from showAdAndNavigate
+  final Function(BuildContext context, Widget page) navigateToJobDetails; 
   
   const JobCard({
     required this.job, 
     required this.primaryColor,
+    required this.showAdAndLaunchUrl, 
+    required this.navigateToJobDetails, // MODIFIED
     super.key
   });
 
-  Future<void> _launchUrl(BuildContext context) async {
-    final Uri url = Uri.parse(job.linkToApply);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the application link.')),
-        );
-      }
-    }
+  // Use the passed function for URL launch (with ad)
+  void _onApplyPressed(BuildContext context) {
+    showAdAndLaunchUrl(context, job.linkToApply);
+  }
+
+  // Use the passed function for navigation (now direct)
+  void _onViewJobPressed(BuildContext context) {
+    // Calling the direct navigation method
+    navigateToJobDetails(
+      context,
+      JobDetailsPage(
+        job: job, 
+        primaryColor: primaryColor, 
+        showAdAndLaunchUrl: showAdAndLaunchUrl, // Still needed for Apply button on details page
+      ),
+    );
   }
 
   @override
@@ -421,23 +516,16 @@ class JobCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                // 1. View Job Button
+                // 1. View Job Button - NOW USES DIRECT NAVIGATION
                 TextButton(
                   style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => JobDetailsPage(job: job, primaryColor: primaryColor),
-                      ),
-                    );
-                  },
+                  onPressed: () => _onViewJobPressed(context), // MODIFIED to call the direct navigation function
                   child: Text('View Job', style: TextStyle(color: primaryColor, fontWeight: FontWeight.w600, fontSize: 13)),
                 ),
                 const SizedBox(width: 4),
-                // 2. Apply Job Button (Opens Link)
+                // 2. Apply Job Button (Opens Link with Ad)
                 ElevatedButton.icon(
-                  onPressed: () => _launchUrl(context),
+                  onPressed: () => _onApplyPressed(context), // Retains ad-then-launchUrl
                   icon: const Icon(Icons.send_outlined, size: 16),
                   label: const Text('Apply Job', style: TextStyle(fontSize: 13)),
                   style: ElevatedButton.styleFrom(
@@ -471,24 +559,24 @@ class JobCard extends StatelessWidget {
 
 
 // --------------------------------------------------------------------------
-// IV. Job Details Page (Full Description) - OVERFLOW FIXED
+// IV. Job Details Page (Full Description)
 // --------------------------------------------------------------------------
 
 class JobDetailsPage extends StatelessWidget {
   final JobModel job;
   final Color primaryColor;
+  final Function(BuildContext context, String url) showAdAndLaunchUrl; 
   
-  const JobDetailsPage({required this.job, required this.primaryColor, super.key});
+  const JobDetailsPage({
+    required this.job, 
+    required this.primaryColor, 
+    required this.showAdAndLaunchUrl, 
+    super.key
+  });
 
-  Future<void> _launchUrl(BuildContext context) async {
-    final Uri url = Uri.parse(job.linkToApply);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the application link.')),
-        );
-      }
-    }
+  // Use the passed function instead of direct URL launch (with ad)
+  void _onApplyPressed(BuildContext context) {
+    showAdAndLaunchUrl(context, job.linkToApply);
   }
 
   @override
@@ -517,8 +605,7 @@ class JobDetailsPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // CHANGE 1: Replaced GridView.count with a dynamic Column layout for details
-            // This guarantees vertical expansion and eliminates the overflow error.
+            // Info Cards Layout
             Column(
               children: [
                 Row(
@@ -549,11 +636,10 @@ class JobDetailsPage extends StatelessWidget {
                 ),
               ],
             ),
-            // End of CHANGE 1
             
             const Divider(height: 32, thickness: 1),
 
-            // --- NEW: Skills Section (Placeholder) ---
+            // Job Description Section
             _buildSectionHeader('📄 Job Description'),
             Text(
               job.jobDescription,
@@ -561,7 +647,7 @@ class JobDetailsPage extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Job Description Section
+            // Skills Section
             _buildSectionHeader('🛠️ Required Skills & Qualifications'),
             Text(
               job.skills,
@@ -589,7 +675,7 @@ class JobDetailsPage extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: ElevatedButton.icon(
-            onPressed: () => _launchUrl(context),
+            onPressed: () => _onApplyPressed(context), // Retains ad-then-launchUrl
             icon: const Icon(Icons.open_in_new),
             label: const Text('Go to Application Link', style: TextStyle(fontSize: 16)),
             style: ElevatedButton.styleFrom(
@@ -604,7 +690,7 @@ class JobDetailsPage extends StatelessWidget {
     );
   }
 
-  // Helper widget for the flexible Info Card (replaces the old _buildInfoTile)
+  // Helper widget for the flexible Info Card
   Widget _buildInfoCard(String title, String subtitle, IconData icon, Color primaryColor) {
     return Container(
       padding: const EdgeInsets.all(10),
@@ -627,7 +713,7 @@ class JobDetailsPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          // Subtitle expands vertically as needed, fixing the overflow
+          // Subtitle expands vertically as needed
           Text(
             subtitle,
             style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
@@ -648,7 +734,7 @@ class JobDetailsPage extends StatelessWidget {
     );
   }
 
-  // Helper widget for placeholder bullet points
+  // Helper widget for placeholder bullet points (kept for completeness)
   Widget _buildBulletPoint(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4.0),
