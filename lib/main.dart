@@ -1,3 +1,4 @@
+// main.dart (CORRECTED)
 import 'package:flutter/material.dart';
 import 'package:grademate/pages/Faculty/faculty_chat_page.dart';
 import 'package:provider/provider.dart';
@@ -47,23 +48,22 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:grademate/pages/Student/job_updates_page.dart';
 import 'package:grademate/pages/Student/student_chat_page.dart';
 import 'package:grademate/pages/Student/student_assignment_page.dart';
-// [NEW ADMOB IMPORT]
-import 'package:google_mobile_ads/google_mobile_ads.dart'; 
-
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'dart:async'; // CRITICAL IMPORT for runZonedGuarded
 
 // [NEW FCM BACKGROUND HANDLER]
 /// Must be a top-level function, cannot be a method of a class.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // If you use other Firebase services in the background, initialize them here.
-  // Since we are just logging/handling a simple data message, we often don't need a full init
-  // if Firebase is already initialized in main.
+  // CRITICAL: Initialize Firebase in the background handler
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   print("Handling a background message: ${message.messageId}");
   
-  // NOTE: If the Cloud Function sends a *Notification* payload, the OS handles displaying it.
-  // If it sends a *Data* payload, you must use flutter_local_notifications here to show a banner.
+  // Note: The system automatically displays the notification if the payload
+  // contains 'notification' data and the channel ID is correctly referenced.
 }
-
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -92,10 +92,10 @@ final _router = GoRouter(
       builder: (context, state) => const NotificationsPage(),
     ),
     GoRoute(
-    path: '/job_updates', // The new route path
-    builder: (context, state) => const JobUpdatesPage(),
-  ),
-  GoRoute(
+      path: '/job_updates', // The new route path
+      builder: (context, state) => const JobUpdatesPage(),
+    ),
+    GoRoute(
       path: '/student_chat', // The new route path
       builder: (context, state) => const StudentChatPage(),
     ),
@@ -191,7 +191,7 @@ final _router = GoRouter(
             ),
           ],
         ),
-         StatefulShellBranch(
+        StatefulShellBranch(
           routes: [
             GoRoute(
               path: '/faculty_ai',
@@ -314,7 +314,14 @@ final _router = GoRouter(
   },
 );
 
-// [NEW FCM SETUP FUNCTION]
+// Define the permanent notification channel details for Android
+const AndroidNotificationChannel channel = AndroidNotificationChannel(
+  'new_file_channel', // ID: This must be the same ID used in flutterLocalNotificationsPlugin.show()
+  'New Content Uploads', // Name
+  description: 'Notifications for new course materials and file uploads.', // Description
+  importance: Importance.high,
+);
+
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
@@ -322,16 +329,33 @@ Future<void> _setupFCM() async {
   // 1. Initialize background handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  // 2. Local notification setup for foreground messages (Android/iOS requires this)
+  // 2. Initialize the Notification Channel (Mandatory for Android 8.0+)
+  // CRITICAL FIX: Ensure the channel is created for both foreground and background
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+
+  // 3. Local notification setup for foreground messages (Android/iOS requires this)
+  // CRITICAL: Use the resource name '@drawable/notification_icon'
   const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  
+    AndroidInitializationSettings('@drawable/notification_icon'); 
+    
+  // NOTE: Added the handler for notification tap
   const InitializationSettings initializationSettings = InitializationSettings(
     android: initializationSettingsAndroid,
   );
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) {
+      // Handle when the user taps on the notification banner
+      print('Notification tapped with payload: ${notificationResponse.payload}');
+      // Here you can navigate the user using the router based on payload data.
+    },
+  );
 
-  // 3. Foreground message listener (Shows a local notification when app is open)
+  // 4. Foreground message listener (Shows a local notification when app is open)
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
     print('Got a message whilst in the foreground!');
     print('Message data: ${message.data}');
@@ -346,57 +370,66 @@ Future<void> _setupFCM() async {
         notification.body,
         NotificationDetails(
           android: AndroidNotificationDetails(
-            'new_file_channel', // Must match the channel ID used in the Cloud Function
-            'New Content Uploads',
-            channelDescription: 'Notifications for new course materials.',
-            icon: android.smallIcon,
+            channel.id, // CRITICAL FIX: Use the defined channel ID for the foreground notification
+            channel.name,
+            channelDescription: channel.description,
+            // CRITICAL FIX: Explicitly reference the custom small icon from Android resources
+            icon: '@drawable/notification_icon', 
           ),
         ),
       );
     }
   });
 
-  // 4. Handle notification tap (if app is closed/in background and user taps banner)
-  // This logic should navigate the user to the correct page based on the message data.
+  // 5. Handle notification tap (if app is closed/in background and user taps banner)
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('A new onMessageOpenedApp event was published!');
-    final route = message.data['route']; // Example: Get a custom route from the data payload
+    final route = message.data[
+        'route']; // Example: Get a custom route from the data payload
     if (route != null) {
-      // You can use the router to navigate here, e.g., to the courses page
+      // Use the router to navigate here
       // _router.go(route);
     }
   });
 }
 
+// CRITICAL FIX: Wrapped the initialization in runZonedGuarded
+void main() {
+  runZonedGuarded<Future<void>>(() async {
+    await dotenv.load(fileName: ".env");
 
-void main() async {
-  await dotenv.load(fileName: ".env");
+    // --- START ADMOB INITIALIZATION ---
+    WidgetsFlutterBinding.ensureInitialized();
+    // 1. Initialize the Google Mobile Ads SDK (Required for banner/interstitial)
+    MobileAds.instance.initialize();
+    // --- END ADMOB INITIALIZATION ---
 
-  // --- START ADMOB INITIALIZATION ---
-  WidgetsFlutterBinding.ensureInitialized();
-  // 1. Initialize the Google Mobile Ads SDK (Required for banner/interstitial)
-  MobileAds.instance.initialize(); 
-  // --- END ADMOB INITIALIZATION ---
+    await _requestPermissions();
 
-  await _requestPermissions();
+    tz.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Asia/Kolkata'));
 
-  tz.initializeTimeZones();
-  tz.setLocalLocation(tz.getLocation('Asia/Kolkata'));
+    final appDocumentDir = await getApplicationDocumentsDirectory();
+    await Hive.initFlutter(appDocumentDir.path);
+    await Hive.openBox<String>('userBox');
 
-  final appDocumentDir = await getApplicationDocumentsDirectory();
-  await Hive.initFlutter(appDocumentDir.path);
-  await Hive.openBox<String>('userBox');
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  
-  // [NEW] Setup FCM handlers right after Firebase initialization
-  await _setupFCM(); 
+    // [NEW] Setup FCM handlers right after Firebase initialization
+    await _setupFCM();
 
-  FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
+    FirebaseFirestore.instance.settings =
+        const Settings(persistenceEnabled: true);
 
-  runApp(const MyApp());
+    runApp(const MyApp());
+  }, (error, stack) {
+    // This is the global crash handler. If an error occurs during startup,
+    // it will be printed here, allowing the app to potentially continue or
+    // display a simple error screen instead of a blank one.
+    print('GLOBAL ERROR CAUGHT: $error');
+  });
 }
 
 Future<void> _requestPermissions() async {

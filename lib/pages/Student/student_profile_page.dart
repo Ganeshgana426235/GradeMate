@@ -85,6 +85,7 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
         }
       } catch (e) {
         if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Failed to load profile: $e')),
           );
@@ -151,6 +152,7 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
       );
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('File picker error: $e')),
         );
@@ -218,7 +220,7 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
             _storage.ref().child('profile_images').child('${user.uid}');
         // We cannot reliably delete without the extension, so we rely on the DB update.
       } catch (storageError) {
-        print("Could not delete from storage (it may not exist): $storageError");
+        //prin("Could not delete from storage (it may not exist): $storageError");
       }
 
 

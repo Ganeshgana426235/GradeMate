@@ -20,13 +20,15 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _isPasswordVisible = false;
 
-  // The path to your static image asset
+  // The path to your static image asset (Restored)
   final String _imageAssetPath = 'lib/pages/Authentication/login_image.png'; 
+  
+  // UI Primary Color (using the original sky blue from RegisterPage)
+  static const Color _primaryColor = Color(0xFF87CEEB);
   
   @override
   void initState() {
     super.initState();
-    // Removed complex ImageStreamListener logic as Image.asset handles static images efficiently
   }
 
   @override
@@ -44,7 +46,50 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // UPDATED: Changed update() to set(..., merge: true) to ensure the document path exists.
+  // Helper function to create the new clean InputDecoration style (Copied from RegisterPage)
+  InputDecoration _buildInputDecoration({
+    required String hintText,
+    required String labelText,
+    required IconData icon,
+    String? errorText,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      hintText: hintText,
+      labelText: labelText,
+      labelStyle: TextStyle(
+        color: errorText != null ? Colors.red : Colors.black54,
+        fontWeight: FontWeight.w500,
+      ),
+      prefixIcon: Icon(icon, color: _primaryColor),
+      suffixIcon: suffixIcon,
+      errorText: errorText,
+      contentPadding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 16.0),
+      // Apply the same border style for all states for the clean outline look
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: BorderSide(color: Colors.grey[300]!, width: 1.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: BorderSide(color: Colors.grey[300]!, width: 1.0),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: _primaryColor, width: 2.0),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: Colors.red, width: 2.0),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.0),
+        borderSide: const BorderSide(color: Colors.red, width: 2.0),
+      ),
+    );
+  }
+
+  // [LOGIC UNCHANGED]
   Future<void> _updateFCMToken(String userEmail, String uid, String collegeId, Map<String, dynamic> userData) async {
     final role = userData['role'] as String?;
     if (role != 'Student') return; 
@@ -60,7 +105,6 @@ class _LoginPageState extends State<LoginPage> {
 
       final studentTokenUpdateData = {
         'fcmToken': fcmToken,
-        // Include relevant identifying data to ensure proper query filtering in CF.
         'branch': studentBranch, 
         'regulation': studentRegulation,
         'year': studentYear,
@@ -71,27 +115,20 @@ class _LoginPageState extends State<LoginPage> {
       final SetOptions mergeOption = SetOptions(merge: true);
 
 
-      // 1. Update the 'users' collection (Top Level - General Profile)
-      // We use set with merge here just in case the document was created by an auth trigger but is incomplete.
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userEmail)
           .set(studentTokenUpdateData, mergeOption);
 
-      // 2. Update the 'colleges/{id}/Students/{uid}' collection (General College Student List)
-      // CRITICAL FIX: Use set(..., merge: true)
       await FirebaseFirestore.instance
           .collection('colleges').doc(collegeId)
           .collection('Students').doc(uid)
           .set(studentTokenUpdateData, mergeOption);
 
-      // 3. Update the specific course collection (Targeted Notifications)
-      // CRITICAL FIX: Use set(..., merge: true)
       await FirebaseFirestore.instance
           .collection('colleges').doc(collegeId)
           .collection('branches').doc(studentBranch) 
           .collection('regulations').doc(studentRegulation) 
-          // Note: The correct collection name here is 'students' (lowercase)
           .collection('Students').doc(uid) 
           .set(studentTokenUpdateData, mergeOption);
 
@@ -102,7 +139,7 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // [UNCHANGED FUNCTION]
+  // [LOGIC UNCHANGED]
   Future<void> _handleLogin() async {
     setState(() {
       _isLoading = true;
@@ -127,7 +164,6 @@ class _LoginPageState extends State<LoginPage> {
           if (role != null && collegeId != null) {
             
             if (role == 'Student') {
-              // Pass the fetched user data to ensure _updateFCMToken has required course context
               await _updateFCMToken(email, uid, collegeId, userData!); 
             }
             
@@ -222,7 +258,7 @@ class _LoginPageState extends State<LoginPage> {
     
     final size = MediaQuery.of(context).size;
     
-    // [Image Widget using FrameBuilder for Shimmer]
+    // [Image Widget using FrameBuilder for Shimmer - RE-INTEGRATED]
     final imageWidget = Stack(
       fit: StackFit.expand,
       children: [
@@ -241,20 +277,18 @@ class _LoginPageState extends State<LoginPage> {
             return _buildShimmerPlaceholder(context); 
           },
         ),
+        // Dark overlay for contrast
         Container(
-          color: Colors.black.withOpacity(0.1),
+          color: Colors.black.withOpacity(0.3), // Slightly darker overlay
         ),
-        const Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: EdgeInsets.only(bottom: 20.0),
-              child: Text(
-                'LOGIN',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
+        const Center(
+            child: Text(
+              'SIGN IN',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32, // Slightly larger
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
               ),
             ),
           ),
@@ -263,38 +297,32 @@ class _LoginPageState extends State<LoginPage> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      // 🐛 FIX: Wrapped the body in a SingleChildScrollView
+      // Removed AppBar to allow the image header to reach the top
       body: SingleChildScrollView( 
-        // 🐛 FIX: ConstrainedBox ensures the content takes up at least the full screen height
         child: ConstrainedBox(
           constraints: BoxConstraints(
             minHeight: size.height,
           ),
           child: Column(
-            // Use MainAxisAlignment.start if you want content to start from the top
-            // Use MainAxisAlignment.spaceBetween if you want the two sections (header/form) to be spaced out
-            mainAxisAlignment: MainAxisAlignment.start, 
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Header Area
+              // 1. Header Area (Image)
               Container(
-                height: size.height * 0.35,
+                height: size.height * 0.35, // Maintain height
                 width: double.infinity,
                 color: const Color(0xFF2F4F4F),
                 child: imageWidget,
               ),
               
-              // 2. Form Area
-              // Note: Removed the unnecessary Expanded widget from this area
+              // 2. Form Area (Using the RegisterPage's Padding and styling)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 30.0),
                 child: Column(
-                  // Use MainAxisAlignment.center to vertically center the form elements in the remaining space
-                  mainAxisAlignment: MainAxisAlignment.center, 
-                  mainAxisSize: MainAxisSize.min, // Allows the column to only take necessary vertical space
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 40), // Added top spacing back
                     const Text(
                       'Welcome Back',
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
@@ -302,49 +330,44 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 40),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F2F5),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TextField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          hintText: 'Email',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                        ),
+                    
+                    // Email Input (New Style)
+                    TextField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: _buildInputDecoration(
+                        hintText: 'Enter your email',
+                        labelText: 'Email',
+                        icon: Icons.email_outlined,
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F2F5),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TextField(
-                        controller: _passwordController,
-                        obscureText: !_isPasswordVisible,
-                        decoration: InputDecoration(
-                          hintText: 'Password',
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                              color: Colors.black54,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _isPasswordVisible = !_isPasswordVisible;
-                              });
-                            },
+                    
+                    // Password Input (New Style)
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: !_isPasswordVisible,
+                      decoration: _buildInputDecoration(
+                        hintText: 'Enter your password',
+                        labelText: 'Password',
+                        icon: Icons.lock_outline,
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                            color: Colors.black54,
                           ),
+                          onPressed: () {
+                            setState(() {
+                              _isPasswordVisible = !_isPasswordVisible;
+                            });
+                          },
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 15),
+
+                    // Forgot Password Link
                     Align(
                       alignment: Alignment.centerRight,
                       child: GestureDetector(
@@ -362,17 +385,20 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 30),
+
+                    // Login Button (New Style)
                     SizedBox(
                       width: double.infinity,
                       height: 55,
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _handleLogin,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF87CEEB),
+                          backgroundColor: _primaryColor, // Use the shared primary color
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                           elevation: 0,
+                          disabledBackgroundColor: _primaryColor.withOpacity(0.5),
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(color: Colors.white)
@@ -387,26 +413,30 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    GestureDetector(
-                      onTap: () {
-                        context.go('/register'); // Navigate to the new RegisterPage
-                      },
-                      child: RichText(
-                        text: const TextSpan(
-                          text: 'Don\'t have an account? ',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 16,
-                          ),
-                          children: [
-                            TextSpan(
-                              text: 'Sign Up',
-                              style: TextStyle(
-                                color: Color(0xFF87CEEB),
-                                fontWeight: FontWeight.bold,
-                              ),
+                    
+                    // Sign Up Link (New Style)
+                    Center(
+                      child: GestureDetector(
+                        onTap: () {
+                          context.go('/register'); 
+                        },
+                        child: RichText(
+                          text: const TextSpan(
+                            text: 'Don\'t have an account? ',
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontSize: 16,
                             ),
-                          ],
+                            children: [
+                              TextSpan(
+                                text: 'Sign Up',
+                                style: TextStyle(
+                                  color: _primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),

@@ -42,7 +42,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance; 
-  late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+  // flutterLocalNotificationsPlugin is now accessed via local instance in helper methods
 
   String? _collegeId;
   String? _branch;
@@ -85,7 +85,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   @override
   void initState() {
     super.initState();
-    _initializeNotifications();
+    // _initializeNotifications(); // REMOVED: Handled in main.dart
     _loadInitialData();
     _loadFileOpenQuota(); // NEW: Load the file open quota
     // AD INIT START
@@ -157,7 +157,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         }
       }
     } catch (e) {
-      print("Error loading file open quota: $e");
+      //prin("Error loading file open quota: $e");
       if(mounted) setState(() => _freeFileOpenCount = 0);
     }
   }
@@ -174,7 +174,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       });
       if(mounted) setState(() => _freeFileOpenCount -= 1);
     } catch (e) {
-      print("Error decrementing file open quota: $e");
+      //prin("Error decrementing file open quota: $e");
     }
   }
 
@@ -189,9 +189,10 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         'count': FieldValue.increment(count),
       });
       if(mounted) setState(() => _freeFileOpenCount += count);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       _showSnackbar("$count extra file opens granted!", success: true);
     } catch (e) {
-      print("Error granting file open quota: $e");
+      //prin("Error granting file open quota: $e");
     }
   }
 
@@ -238,12 +239,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
             onAdFailedToShowFullScreenContent: (ad, error) {
               ad.dispose();
               _loadInterstitialAd(); 
-              print('Interstitial ad failed to show: $error');
+              //prin('Interstitial ad failed to show: $error');
             },
           );
         },
         onAdFailedToLoad: (error) {
-          print('InterstitialAd failed to load: $error');
+          //prin('InterstitialAd failed to load: $error');
           _interstitialAd = null;
         },
       ),
@@ -287,12 +288,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
             onAdFailedToShowFullScreenContent: (ad, error) {
               ad.dispose();
               _loadRewardedAd();
-              print('Rewarded ad failed to show: $error');
+              //prin('Rewarded ad failed to show: $error');
             },
           );
         },
         onAdFailedToLoad: (error) {
-          print('RewardedAd failed to load: $error');
+          //prin('RewardedAd failed to load: $error');
           _rewardedAd = null;
         },
       ),
@@ -304,6 +305,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     if (_rewardedAd != null) {
       _rewardedAd!.show(onUserEarnedReward: (ad, reward) {
         onRewardGranted(); // Execute the core logic
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         _showSnackbar('Reward granted! Action started.', success: true);
         _loadRewardedAd(); // Load next ad
       });
@@ -316,12 +318,14 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         onAdFailedToShowFullScreenContent: (ad, error) {
           ad.dispose();
           _loadRewardedAd();
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
           _showSnackbar('Ad failed to load. Please try again.', success: false);
           onAdDismissed(); // Execute logic for dismissal (if ad fails)
         },
       );
     } else {
       // If ad is not ready, prompt the user to try again
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       _showSnackbar('Ad is not ready. Please wait a moment and try the download again.', success: false);
     }
   }
@@ -396,7 +400,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
           });
         }
       } catch (e) {
-        print("Error loading user data for courses: $e");
+        //prin("Error loading user data for courses: $e");
       }
     }
   }
@@ -414,7 +418,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         });
       }
     } catch (e) {
-      print("Error loading favorite file paths: $e");
+      //prin("Error loading favorite file paths: $e");
     }
   }
 
@@ -445,7 +449,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
           validItems.add(data);
         }
       } catch (e) {
-        print("Error fetching recent file at path $path: $e");
+        //prin("Error fetching recent file at path $path: $e");
       }
     }
 
@@ -487,7 +491,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       await _loadRecentlyAccessedFiles(); 
 
     } catch (e) {
-      print("Error updating recently accessed list: $e");
+      //prin("Error updating recently accessed list: $e");
     }
   }
   
@@ -517,7 +521,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       await _firestore.collection('activities').add(activityData);
       
     } catch (e) {
-      print("Error logging activity: $e");
+      //prin("Error logging activity: $e");
     }
   }
 
@@ -561,6 +565,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   Future<void> _showAddResourceDialog() async {
     if (_collegeId == null || _branch == null || _regulation == null || _currentYearId == null || _currentSubjectId == null || _userEmail == null || _auth.currentUser?.uid == null) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot add resource: User or course details are missing.'), backgroundColor: Colors.red));
       return;
     }
@@ -606,8 +611,8 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       // Monitor upload progress (optional but good UX)
       uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
         final progress = (snapshot.bytesTransferred / snapshot.totalBytes * 100).toInt();
-        // You would typically show a notification or UI progress bar here
-        print('Upload progress: $progress%');
+        // Use notification ID 1 for upload progress on the Courses page (using helpers below)
+        _showProgressNotification('Uploading', fileName, progress, 1); 
       });
       
       // Wait for completion and get the download URL
@@ -637,6 +642,9 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       });
       
       if (!mounted) return;
+      // Show completion notification (using helpers below)
+      await _showCompletionNotification('Upload Complete', fileName, 1);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Resource uploaded and submitted for faculty review!'),
@@ -655,6 +663,10 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
 
     } catch (e) {
       if (!mounted) return;
+      // Cancel notification ID 1 if upload fails
+      final FlutterLocalNotificationsPlugin localPlugin = FlutterLocalNotificationsPlugin();
+      await localPlugin.cancel(1); 
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error uploading file or submitting request: $e'),
@@ -667,7 +679,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
          try {
            await _storage.refFromURL(fileDownloadUrl).delete();
          } catch (storageError) {
-           print("Failed to clean up storage after Firestore error: $storageError");
+           //prin("Failed to clean up storage after Firestore error: $storageError");
          }
       }
     }
@@ -1962,6 +1974,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   // ** FIX: Added Missing _showSnackbar method **
   void _showSnackbar(String message, {bool success = true}) {
     if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: success ? Colors.green : Colors.red),
     );
@@ -1984,10 +1997,13 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       
       // Notification scheduling logic removed to prevent compilation errors
       
-      if (mounted) _showSnackbar('Reminder added for "$title"!');
+      if (mounted){ScaffoldMessenger.of(context).hideCurrentSnackBar();
+       _showSnackbar('Reminder added for "$title"!');
+      }
 
     } catch (e) {
-      print("Error adding reminder: $e");
+      //prin("Error adding reminder: $e");
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       if (mounted) _showSnackbar('Failed to set reminder: ${e.toString()}', success: false);
     }
   }
@@ -2155,7 +2171,9 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
                                   );
                                   Navigator.pop(context);
                                 } else {
-                                   if (mounted) _showSnackbar('Please choose a date and time.', success: false);
+                                   if (mounted){ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                    _showSnackbar('Please choose a date and time.', success: false);
+                                   }
                                 }
                             },
                             child: const Text('Save Reminder', style: TextStyle(fontSize: 16)),
@@ -2195,6 +2213,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         'favorites': FieldValue.arrayUnion([doc.reference.path])
       });
       if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Added to Favorites!'),
@@ -2203,6 +2222,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       );
     } catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error adding to favorites: $e'),
@@ -2287,6 +2307,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   Future<void> _downloadFile(DocumentSnapshot doc) async {
     if (!await _isConnected()) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('No internet connection. Please check your network.'),
           backgroundColor: Colors.red,
@@ -2317,26 +2338,31 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
         onReceiveProgress: (received, total) {
           if (total != -1) {
             final progress = (received / total * 100).toInt();
-            // Assuming _showProgressNotification is defined elsewhere, removed for simplicity
-            // _showProgressNotification('Downloading', fileName, progress, 2);
+            // Use notification ID 2 for download progress
+            _showProgressNotification('Downloading', fileName, progress, 2); 
           }
         },
       );
       
       if (!mounted) return;
-      // Assuming _showCompletionNotification is defined elsewhere, removed for simplicity
-      // await _showCompletionNotification('Download Complete', fileName, 2);
+      // Show completion notification (using helpers below)
+      await _showCompletionNotification('Download Complete', fileName, 2);
       
       if (!mounted) return;
       // The reward ad closure will show the "Download started" snackbar. 
       // This snackbar is for the completion notification.
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('File saved to GradeMate folder!'),
         backgroundColor: Colors.green,
       ));
     } catch (e) {
-      // await flutterLocalNotificationsPlugin.cancel(2); // Notification cancellation removed
+      // FIX: Cancel notification ID 2 if download fails
+      final FlutterLocalNotificationsPlugin localPlugin = FlutterLocalNotificationsPlugin();
+      await localPlugin.cancel(2); 
+      
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text('Error downloading file: Please check your internet connection or Allow Storage Permissions.'),
@@ -2349,6 +2375,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
   Future<void> _shareFile(DocumentSnapshot doc) async {
     if (!await _isConnected()) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('No internet connection. Please check your network.'),
           backgroundColor: Colors.red,
@@ -2367,6 +2394,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       final tempFilePath = '${dir.path}/$fileName';
 
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Preparing file for sharing...')));
       }
@@ -2379,6 +2407,7 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
           
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text('Failed to share file: Please check your internet connection'),
@@ -2388,18 +2417,13 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     }
   }
   
-  void _initializeNotifications() {
-    // ** FIX: Added basic notification initialization logic **
-    flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initSettings =
-        InitializationSettings(android: androidSettings);
-    flutterLocalNotificationsPlugin.initialize(initSettings);
-  }
-  
+  // FIX: Ensures a local plugin instance is used and custom icon is specified
+  // This enables notifications on the Courses page.
   Future<void> _showProgressNotification(String title, String fileName,
       int progress, int notificationId) async {
+    // Get a local plugin instance
+    final FlutterLocalNotificationsPlugin localPlugin = FlutterLocalNotificationsPlugin();
+    
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'progress_channel_id',
       'Progress Channel',
@@ -2412,10 +2436,12 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
       progress: progress,
       ongoing: true,
       autoCancel: false,
+      // CRITICAL FIX: Explicitly set the custom icon for local notifications
+      icon: '@drawable/notification_icon', 
     );
     final NotificationDetails platformDetails =
         NotificationDetails(android: androidDetails);
-    await flutterLocalNotificationsPlugin.show(
+    await localPlugin.show(
       notificationId,
       title,
       '$fileName: $progress%',
@@ -2423,19 +2449,26 @@ class _StudentCoursesPageState extends State<StudentCoursesPage> {
     );
   }
   
+  // FIX: Ensures a local plugin instance is used and custom icon is specified
+  // This enables notifications on the Courses page.
   Future<void> _showCompletionNotification(
       String title, String fileName, int notificationId) async {
-    await flutterLocalNotificationsPlugin.cancel(notificationId);
+    // Get a local plugin instance
+    final FlutterLocalNotificationsPlugin localPlugin = FlutterLocalNotificationsPlugin();
+    
+    await localPlugin.cancel(notificationId);
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'completion_channel_id',
       'Completion Channel',
       channelDescription: 'Notifies when an operation is finished',
       importance: Importance.high,
       priority: Priority.high,
+      // CRITICAL FIX: Explicitly set the custom icon for local notifications
+      icon: '@drawable/notification_icon', 
     );
     final NotificationDetails platformDetails =
         NotificationDetails(android: androidDetails);
-    await flutterLocalNotificationsPlugin.show(
+    await localPlugin.show(
       DateTime.now().millisecondsSinceEpoch.remainder(100000),
       title,
       '"$fileName" has finished successfully.',
@@ -2505,7 +2538,7 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          print('BannerAd failed to load: $error');
+          //prin('BannerAd failed to load: $error');
         },
       ),
     )..load();

@@ -2,6 +2,7 @@ import java.util.Properties
 import java.io.FileInputStream
 import java.io.File
 
+// Function to read properties from local.properties (standard Flutter utility)
 fun getFlutterProperty(key: String): String? {
     val localProperties = Properties()
     val localPropertiesFile = rootProject.file("local.properties")
@@ -18,18 +19,20 @@ plugins {
 }
 
 android {
-    namespace = "com.example.grademate"
+    // IMPORTANT: Ensure your AndroidManifest.xml has NO 'package' attribute
+    // and that 'applicationId' in defaultConfig matches this 'namespace'.
+    namespace = "com.grademate.grademate" // Replace 'com.grademate.grademate' with your final unique ID
     
     val flutterVersionCode = getFlutterProperty("flutter.versionCode")
     val flutterVersionName = getFlutterProperty("flutter.versionName")
 
-    compileSdkVersion(36)
+    compileSdk = 36 
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
-        applicationId = "com.example.grademate"
-        minSdkVersion(24)
-        targetSdkVersion(36)
+        applicationId = "com.grademate.grademate" // Replace 'com.grademate.grademate' with your final unique ID
+        minSdk = 24 
+        targetSdk = 36 
         versionCode = flutterVersionCode?.toInt() ?: 1
         versionName = flutterVersionName ?: "1.0"
     }
@@ -44,14 +47,30 @@ android {
         jvmTarget = "1.8"
     }
     
+    signingConfigs {
+        create("release") {
+            // 🛑 DIRECT CREDENTIALS (Fixes property reading errors)
+            // Path: Ensure this is the correct absolute path to your JKS file.
+            // Double backslashes (\\) are used for robustness on Windows.
+            storeFile = file("C:\\Users\\ganesh\\Documents\\GradeMateKeys\\my_release_key.jks") 
+            
+            // Passwords and Alias
+            storePassword = "Coder@4262"
+            keyAlias = "grademate_keys"
+            keyPassword = "Coder@4262"
+        }
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            // This applies the hardcoded signing config
+            signingConfig = signingConfigs.getByName("release")
         }
         getByName("debug") {
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }

@@ -1,4 +1,4 @@
-package com.example.grademate
+package com.grademate.grademate
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -7,6 +7,11 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:intl/intl.dart';
 
+// --- Color Constants for UI/UX Consistency ---
+const Color _kPrimaryColor = Color(0xFF6A67FE);
+const Color _kLightPrimaryColor = Color(0xFFF0F5FF);
+// ---
+
 // ======================= MAIN NOTES PAGE ==========================
 class MyNotesPage extends StatefulWidget {
   const MyNotesPage({super.key});
@@ -57,6 +62,7 @@ class _MyNotesPageState extends State<MyNotesPage> {
   }
 
   void _openNoteEditor({DocumentSnapshot? note}) {
+    // Use pushNamed for better navigation if routes are defined, otherwise MaterialPageRoute
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => NoteEditorPage(note: note),
@@ -121,95 +127,119 @@ class _MyNotesPageState extends State<MyNotesPage> {
             icon: const Icon(Icons.arrow_back, color: Colors.black),
             onPressed: _navigateBack,
           ),
-          title: const Text('Notes'),
+          title: const Text('My Notes', style: TextStyle(fontWeight: FontWeight.bold)),
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
           elevation: 0,
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: () => _openNoteEditor(),
-          backgroundColor: Colors.blue,
+          backgroundColor: _kPrimaryColor, // UI FIX: Apply primary color
           foregroundColor: Colors.white,
-          child: const Icon(Icons.note_add_outlined),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15.0)), // UI FIX: Rounded shape
+          child: const Icon(Icons.add), // UI FIX: Simple + icon
         ),
         body: StreamBuilder<QuerySnapshot>(
           stream:
               _notesCollection.orderBy('timestamp', descending: true).snapshots(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const Center(child: CircularProgressIndicator(color: _kPrimaryColor)); // UI FIX: Apply primary color
             }
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return const NoNotesView();
             }
             final notes = snapshot.data!.docs;
             return ListView.builder(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 80),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
               itemCount: notes.length,
               itemBuilder: (context, index) {
                 final note = notes[index];
-                final data = note.data() as Map<String, dynamic>;
-                String contentPreview = "...";
-                try {
-                  var decoded = jsonDecode(data['content']);
-                  final doc = quill.Document.fromJson(decoded);
-                  contentPreview = doc.toPlainText().replaceAll('\n', ' ');
-                } catch (e) {
-                  contentPreview = data['content'] ?? '...';
-                }
-
-                String title = data['title'] ?? 'Untitled';
-                Timestamp? ts = data['timestamp'] as Timestamp?;
-                String timeLabel = ts != null
-                    ? DateFormat('dd MMM yyyy, hh:mm a').format(ts.toDate())
-                    : '';
-
-                return Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ListTile(
-                    leading: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(50),
-                      ),
-                      // =========== MODIFIED: APPLY COLOR TO ICON, NOT CONTAINER =============
-                      child: Icon(Icons.article_outlined,
-                          color: Colors.lightBlue.shade400),
-                    ),
-                    title: Text(title,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          contentPreview,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (timeLabel.isNotEmpty)
-                          Text(timeLabel,
-                              style: TextStyle(
-                                  fontSize: 12, color: Colors.grey[500])),
-                      ],
-                    ),
-                    trailing: IconButton(
-                      icon: Icon(Icons.delete_outline, color: Colors.grey[600]),
-                      onPressed: () => _confirmDeleteNote(note.id),
-                    ),
-                    isThreeLine: true,
-                    onTap: () => _openNoteEditor(note: note),
-                  ),
-                );
+                return _buildNoteCard(note);
               },
             );
           },
+        ),
+      ),
+    );
+  }
+
+  // NEW WIDGET: Custom Note Card for improved UI/UX
+  Widget _buildNoteCard(DocumentSnapshot note) {
+    final data = note.data() as Map<String, dynamic>;
+    String contentPreview = "Empty note";
+    try {
+      var decoded = jsonDecode(data['content']);
+      final doc = quill.Document.fromJson(decoded);
+      // Clean up preview: remove newlines and truncate
+      contentPreview = doc.toPlainText().replaceAll('\n', ' ').trim();
+      if (contentPreview.isEmpty) contentPreview = "Empty note";
+    } catch (e) {
+      contentPreview = (data['content'] ?? 'Empty note').toString().replaceAll('\n', ' ').trim();
+    }
+
+    String title = data['title']?.toString().trim() ?? 'Untitled Note';
+    Timestamp? ts = data['timestamp'] as Timestamp?;
+    String timeLabel = ts != null
+        ? DateFormat('dd MMM yyyy, hh:mm a').format(ts.toDate())
+        : 'No date';
+
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade300), // UI FIX: Border for better definition
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openNoteEditor(note: note),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.article_outlined, color: _kPrimaryColor, size: 24), // UI FIX: Use primary color
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.delete_outline, color: Colors.grey[600]),
+                    onPressed: () => _confirmDeleteNote(note.id),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              const Divider(height: 16),
+              Text(
+                contentPreview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  timeLabel,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -330,6 +360,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       debugPrint('Error saving note: $e');
       if (mounted) {
         ScaffoldMessenger.of(context)
+  // 1. Hide the current snackbar (if one is showing)
+  .hideCurrentSnackBar();
+        ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Failed to save note.')));
         // On failure, re-enable the save button
         setState(() {
@@ -383,16 +416,16 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: Colors.white, // UI FIX: Use white background
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        backgroundColor: Colors.white, // UI FIX: Use white app bar
+        elevation: 1, // UI FIX: Slight elevation for separation
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(widget.note == null ? 'New Note' : 'Edit Note',
-            style: const TextStyle(color: Colors.black)),
+            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         centerTitle: true,
         actions: [
           if (widget.note != null)
@@ -409,7 +442,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, // UI FIX: Align content left
                   children: [
+                    // Title Field
                     TextField(
                       controller: _titleController,
                       maxLength: 100,
@@ -417,33 +452,42 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                         hintText: 'Title',
                         border: InputBorder.none,
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: Colors.grey.shade50, // UI FIX: Light background fill
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 16),
+                            horizontal: 16, vertical: 14),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.blue),
+                          borderSide: const BorderSide(color: _kPrimaryColor, width: 2), // UI FIX: Primary color focus border
                         ),
                       ),
                       style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold),
+                          fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
                     ),
                     const SizedBox(height: 16),
+                    
+                    // Quill Editor Container
                     Card(
                       margin: EdgeInsets.zero,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                           side: BorderSide(color: Colors.grey.shade300)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Column(
-                          children: [
-                            quill.QuillSimpleToolbar(
+                      child: Column(
+                        children: [
+                          // Toolbar
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100, // UI FIX: Light toolbar background
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(12),
+                                topRight: Radius.circular(12),
+                              )
+                            ),
+                            child: quill.QuillSimpleToolbar(
                               controller: _quillController,
                               config: const quill.QuillSimpleToolbarConfig(
                                 showBoldButton: true,
@@ -458,79 +502,93 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                                 showRedo: true,
                               ),
                             ),
-                            const Divider(),
-                            SizedBox(
-                              height: 300,
-                              child: quill.QuillEditor.basic(
-                                controller: _quillController,
-                                focusNode: _editorFocusNode,
-                                config: const quill.QuillEditorConfig(
-                                  placeholder: 'Write your note here...',
-                                  padding: EdgeInsets.all(16),
+                          ),
+                          const Divider(height: 1, thickness: 1),
+                          
+                          // Editor Body
+                          SizedBox(
+                            height: 300,
+                            child: quill.QuillEditor.basic(
+                              controller: _quillController,
+                              focusNode: _editorFocusNode,
+                              config: const quill.QuillEditorConfig(
+                                placeholder: 'Write your note here...',
+                                padding: EdgeInsets.all(16),
+                              ),
+                            ),
+                          ),
+                          
+                          // Character Count
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 16.0, bottom: 8.0, top: 4.0),
+                              child: Text(
+                                '$_contentCharCount / $_maxContentChars',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _contentCharCount > _maxContentChars
+                                      ? Colors.red
+                                      : Colors.grey,
                                 ),
                               ),
                             ),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                child: Text(
-                                  '$_contentCharCount / $_maxContentChars',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: _contentCharCount > _maxContentChars
-                                        ? Colors.red
-                                        : Colors.grey,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            onPressed: _isSaving ? null : _saveNote,
-                            child: _isSaving
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2.0,
-                                    ),
-                                  )
-                                : const Text('Save'),
-                          ),
-                        ),
-                      ],
                     ),
                   ],
                 ),
               ),
+            ),
+          ),
+          // Save/Cancel Buttons
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 5, offset: const Offset(0, -2))]
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      side: BorderSide(color: _kPrimaryColor), // UI FIX: Primary color border
+                      foregroundColor: _kPrimaryColor, // UI FIX: Primary color text
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _kPrimaryColor, // UI FIX: Primary color fill
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    onPressed: _isSaving ? null : _saveNote,
+                    child: _isSaving
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.0,
+                            ),
+                          )
+                        : const Text('Save', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -577,14 +635,14 @@ class _NoNotesViewState extends State<NoNotesView>
           builder: (context, child) =>
               Transform.translate(offset: Offset(0, _animation.value), child: child),
           child:
-              Icon(Icons.note_alt_outlined, size: 100, color: Colors.grey[300]),
+              Icon(Icons.note_alt_outlined, size: 100, color: _kPrimaryColor.withOpacity(0.3)), // UI FIX: Use primary color opacity
         ),
         const SizedBox(height: 24),
         Text('No notes yet',
-            style: TextStyle(fontSize: 22, color: Colors.grey[600])),
+            style: TextStyle(fontSize: 22, color: Colors.grey[800], fontWeight: FontWeight.w600)), // UI FIX: Darker text
         const SizedBox(height: 8),
         Text('Tap the + button to add your first note.',
-            style: TextStyle(fontSize: 16, color: Colors.grey[500])),
+            style: TextStyle(fontSize: 16, color: Colors.grey[600])), // UI FIX: Better contrast text
       ]),
     );
   }

@@ -329,7 +329,7 @@ class _FacultyMyFilesPageState extends State<FacultyMyFilesPage> {
   void _initializeNotifications() {
     flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
     const AndroidInitializationSettings androidInitializationSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+        AndroidInitializationSettings('@drawable/notification_icon');
     const InitializationSettings initializationSettings =
         InitializationSettings(android: androidInitializationSettings);
     flutterLocalNotificationsPlugin.initialize(initializationSettings);

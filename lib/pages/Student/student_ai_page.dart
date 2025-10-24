@@ -218,7 +218,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
             }
         }
     } catch (e) {
-        if (kDebugMode) print("Error loading user quota: $e");
+        if (kDebugMode) //print("Error loading user quota: $e");
         if(mounted) {
             setState(() {
                 _freeTextPromptCount = 0;
@@ -363,6 +363,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
 
       if (querySnapshot.docs.isEmpty) {
         if (isInitial && _chatItems.isEmpty) {
+          // Display initial welcome message only if there are no existing chat items
           _chatItems.add(MessageItem(ChatMessage(
             text: "Hello! I am your AI Assistant. How can I help you today?",
             role: 'model',
@@ -375,7 +376,8 @@ class _StudentAIPageState extends State<StudentAIPage> {
         final newItems = <ChatItem>[];
 
         if (isInitial) {
-          _latestSessionId = querySnapshot.docs.first.id;
+          // Set the latest session ID only if we successfully loaded chat history
+          _latestSessionId = querySnapshot.docs.first.id; 
         }
 
         for (final doc in querySnapshot.docs.reversed) {
@@ -423,6 +425,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
           timestamp: Timestamp.now(),
         );
         _chatItems.add(MessageItem(initialMessage));
+        // Force a new session creation here
         _saveMessage(initialMessage, isNewSession: true, file: _attachedFile);
         _processFile(_attachedFile!);
       }
@@ -491,7 +494,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
     _saveMessage(errorMessage);
   }
   
-  // --- ADDED: The required _sendMessage function (Entry Point) ---
+  // --- FIXED: The required _sendMessage function (Entry Point) ---
   Future<void> _sendMessage() async {
     final userMessageText = _textController.text.trim();
     if (userMessageText.isEmpty || _isLoading) return;
@@ -505,28 +508,22 @@ class _StudentAIPageState extends State<StudentAIPage> {
         return;
     }
     
-    // Set loading state right away, as the ad dialog or execution is loading.
+    // Set loading state right away.
     if(mounted) setState(() => _isLoading = true);
     _textController.clear();
     _scrollToBottom();
     
-    // Check if a new session needs to be started
-    bool shouldStartNewSession = _latestSessionId == null;
-
-    if (shouldStartNewSession) {
-      // If no session is established, force a refresh and tell user to try again
-      await _handleRefresh();
-      if(mounted) setState(() => _isLoading = false);
-      _showErrorDialog("Session Error", "Could not find an active chat session. Please try sending your message again.");
-      return;
-    }
+    // **FIX APPLIED HERE:**
+    // Removed the check that forced a refresh and showed the "Session Error" dialog
+    // if (_latestSessionId == null). The logic now proceeds directly to the
+    // quota check and execution, allowing the core function to create the session.
     
     // Handle Quota/Ad check
     await _handleQuotaAndSend(userMessageText);
     
     // _isLoading will be reset by _executeSendMessage's finally block
   }
-  // --- END ADDED: _sendMessage function ---
+  // --- END FIXED: _sendMessage function ---
 
   // --- UPDATED Quota and Ad Check Handler ---
   Future<void> _handleQuotaAndSend(String userMessageText) async {
@@ -586,14 +583,16 @@ class _StudentAIPageState extends State<StudentAIPage> {
     if (mounted) setState(() => _chatItems.add(MessageItem(userMessage)));
     _scrollToBottom();
 
-    // Save the user message and ensure session ID is set (or was already set)
-    bool shouldStartNewSession = _latestSessionId == null;
+    // Save the user message and ensure session ID is set (or was already set).
+    // isNewSession will be true if _latestSessionId is null (first message for a new user).
+    bool shouldStartNewSession = _latestSessionId == null; 
     await _saveMessage(userMessage, isNewSession: shouldStartNewSession);
 
-    // This is the safety check after save
+    // After save, _latestSessionId *must* be set, either from loading history or from creating the new document.
     if (_latestSessionId == null) {
+        // This is a last-resort error, indicating Firestore failed to create the session document.
         if (mounted) setState(() => _isLoading = false);
-        _showErrorDialog("Session Error", "Could not establish a chat session. Please refresh and try again.");
+        _showErrorDialog("Firestore Error", "Failed to establish a chat session. Please check your network and refresh.");
         return;
     }
 
@@ -676,7 +675,8 @@ class _StudentAIPageState extends State<StudentAIPage> {
           'fileType': file?.type,
           'messages': [message.toMap()],
         });
-        if (mounted) setState(() => _latestSessionId = newSessionDoc.id);
+        // IMPORTANT: Set the new session ID after creation
+        if (mounted) setState(() => _latestSessionId = newSessionDoc.id); 
       } catch (e) { if (kDebugMode) print("Error creating new chat session: $e"); }
     } else {
       try {
@@ -1049,6 +1049,7 @@ class _StudentAIPageState extends State<StudentAIPage> {
 
   void _showSnackbar(String message, {bool success = true}) {
     if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: success ? Colors.green : Colors.red),
     );

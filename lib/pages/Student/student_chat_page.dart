@@ -124,7 +124,7 @@ class _StudentChatPageState extends State<StudentChatPage> {
         );
       }
     } catch (e) {
-      print('Error fetching user data for chat: $e');
+      //prin('Error fetching user data for chat: $e');
       // If any error, use fallback data for UI
       _userData = UserData(
             uid: user.uid, email: user.email!, role: 'Student', name: user.email!.split('@').first,
@@ -296,7 +296,7 @@ class __ChatRoomState extends State<_ChatRoom> {
          });
       }
     }).catchError((error) {
-       print('Firestore Initial Load Error: $error');
+       //prin('Firestore Initial Load Error: $error');
        if (mounted) { 
           setState(() {
              _isInitialLoad = false;
@@ -366,7 +366,7 @@ class __ChatRoomState extends State<_ChatRoom> {
         }
       },
       onError: (error) {
-        print('Firestore Listener Error: $error');
+        //prin('Firestore Listener Error: $error');
         // Do not update the UI if the listener throws an error after initial load
       },
     );
@@ -389,8 +389,9 @@ class __ChatRoomState extends State<_ChatRoom> {
       await FirebaseFirestore.instance.collection(widget.chatPath).doc(docId).delete();
       // Deletion success is handled by the listener removing the doc from _firestoreMessages.
     } catch (e) {
-      print('Error deleting message $docId: $e');
+      //prin('Error deleting message $docId: $e');
       if (mounted) { // FIX: Added mounted check
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to delete message.')),
         );
@@ -406,8 +407,9 @@ class __ChatRoomState extends State<_ChatRoom> {
         'edited': true,
       });
     } catch (e) {
-      print('Error editing message $docId: $e');
+      //prin('Error editing message $docId: $e');
       if (mounted) { // FIX: Added mounted check
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to edit message.')),
         );
@@ -446,6 +448,7 @@ class __ChatRoomState extends State<_ChatRoom> {
                   _editMessage(docId, newText);
                   Navigator.of(context).pop();
                 } else if (newText.length > _maxMessageLength) {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                    ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Message exceeds limit of $_maxMessageLength characters.')),
                   );
@@ -465,6 +468,7 @@ class __ChatRoomState extends State<_ChatRoom> {
     
     if (text.length > _maxMessageLength) {
        if (mounted) { // FIX: Added mounted check
+       ScaffoldMessenger.of(context).hideCurrentSnackBar();
          ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Message exceeds the maximum limit of $_maxMessageLength characters.')),
           );
@@ -507,7 +511,7 @@ class __ChatRoomState extends State<_ChatRoom> {
       // Success: The listener will handle removal from _pendingMessages and addition to _firestoreMessages
       
     } catch (e) {
-      print('Error sending message: $e');
+      //prin('Error sending message: $e');
       // Failure: Update status of the pending message
       if (mounted) { // FIX: Added mounted check
         setState(() {
@@ -520,6 +524,7 @@ class __ChatRoomState extends State<_ChatRoom> {
             );
           }
         });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to send message. Tap to retry.')),
         );

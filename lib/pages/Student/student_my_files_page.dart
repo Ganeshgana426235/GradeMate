@@ -820,6 +820,7 @@ class _StudentMyFilesPageState extends State<StudentMyFilesPage> {
 
   void _showSnackbar(String message, {bool success = true}) {
     if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: success ? Colors.green : Colors.red),
     );

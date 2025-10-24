@@ -66,7 +66,7 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          print('BannerAd failed to load: $error');
+          //prin('BannerAd failed to load: $error');
         },
       ),
     )..load();
@@ -144,7 +144,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           _userName = fullName?.split(' ').first;
         }
       } catch (e) {
-        print("Error loading user data: $e");
+        //prin("Error loading user data: $e");
       }
     }
   }
@@ -167,7 +167,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         }
       }
     } catch (e) {
-      print("Error loading activities from cache: $e");
+      //prin("Error loading activities from cache: $e");
     }
   }
 
@@ -205,7 +205,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       await prefs.setString(
           'student_recent_activities', json.encode(firestoreActivities));
     } catch (e) {
-      print("Error fetching activities from Firestore: $e");
+      //prin("Error fetching activities from Firestore: $e");
     }
   }
 
@@ -235,7 +235,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         });
       }
     } catch (e) {
-      print("Error fetching upcoming reminders: $e");
+      //prin("Error fetching upcoming reminders: $e");
     }
   }
 
@@ -267,7 +267,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           invalidPaths.add(path);
         }
       } catch (e) {
-        print("Error fetching recent file at path $path: $e");
+        //prin("Error fetching recent file at path $path: $e");
         invalidPaths.add(path);
       }
     }
@@ -288,6 +288,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   Future<void> _openExternalUrl(String? url) async {
     if (url == null || url.isEmpty) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not open link: URL is empty.')),
         );
@@ -299,6 +300,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open URL: $url')),
         );
@@ -899,6 +901,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           );
 
           if (file.url.isEmpty) {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('Cannot open file: URL is missing.'),

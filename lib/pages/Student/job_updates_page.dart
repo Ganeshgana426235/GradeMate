@@ -148,7 +148,7 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
           _interstitialAd = ad;
         },
         onAdFailedToLoad: (error) {
-          if (kDebugMode) print('InterstitialAd failed to load: $error');
+          if (kDebugMode) //print('InterstitialAd failed to load: $error');
           _interstitialAd = null;
         },
       ),
@@ -163,6 +163,9 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
     Future<void> launch() async {
       if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
         if (context.mounted) {
+          ScaffoldMessenger.of(context)
+  // 1. Hide the current snackbar (if one is showing)
+  .hideCurrentSnackBar();
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Could not open the application link.')),
           );
@@ -180,14 +183,14 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
         onAdFailedToShowFullScreenContent: (ad, error) {
           ad.dispose();
           _loadInterstitialAd(); // Load the next ad
-          if (kDebugMode) print('Interstitial ad failed to show: $error');
+          if (kDebugMode) //print('Interstitial ad failed to show: $error');
           launch(); // Execute the action even if the ad fails to show
         },
       );
       _interstitialAd!.show();
     } else {
       // If ad is not ready, launch the URL directly and try to load a new ad.
-      if (kDebugMode) print('Ad not loaded, launching URL directly.');
+      if (kDebugMode) //print('Ad not loaded, launching URL directly.');
       launch();
       _loadInterstitialAd(); 
     }
@@ -236,7 +239,7 @@ class _JobUpdatesPageState extends State<JobUpdatesPage> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
-          '💼 Student Job Updates',
+          '💼 Job Updates',
           style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.black87),
         ),
         backgroundColor: Colors.white,

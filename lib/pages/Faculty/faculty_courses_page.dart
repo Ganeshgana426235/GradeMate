@@ -80,7 +80,7 @@ class _FacultyCoursesPageState extends State<FacultyCoursesPage> {
   void _initializeNotifications() {
     flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
     const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+        AndroidInitializationSettings('@drawable/notification_icon');
     const InitializationSettings initSettings =
         InitializationSettings(android: androidSettings);
     flutterLocalNotificationsPlugin.initialize(initSettings);
